@@ -213,7 +213,7 @@ def draw_dashboard():
     if recent:
         success_per_run = [1 if a.get("success") else 0 for a in recent]
         console.print("  [dim]Recent Activity:[/dim]")
-        console.print(make_mini_chart(success_per_run, width=20, height=4))
+        console.print(make_bar_chart(success_per_run, width=20, height=4))
         console.print()
 
     # Menu
