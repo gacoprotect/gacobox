@@ -297,7 +297,7 @@ async def _drive(cfg, count, dashboard, state):
         while email in skip:  # Skip if already registered
             email = generate_email(cfg.tempmail_domain)
         password = generate_password()
-        tasks.append(asyncio.create_task(_account(launched % workers, email, password)))
+        tasks.append(asyncio.create_task(_account(launched % cfg.max_workers, email, password)))
         launched += 1
         await asyncio.sleep(secrets.SystemRandom().uniform(*cfg.delay_range))
 
