@@ -1,4 +1,4 @@
-"""Blackbox.ai Farm — Modern TUI Application."""
+"""Blackbox.ai Farm — Animated Visual Dashboard TUI."""
 from __future__ import annotations
 
 import asyncio
@@ -26,8 +26,11 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 from rich.columns import Columns
+from rich.progress_bar import ProgressBar
 from rich import box
 from rich.style import Style
+from rich.layout import Layout
+from rich.live import Live
 
 from config import Config
 from dashboard import FarmDashboard
@@ -39,21 +42,6 @@ from providers.tempmail import generate_email
 
 STATE_FILE = "state.json"
 console = Console()
-
-# ─── Color Theme ──────────────────────────────────────────────────────
-
-class Theme:
-    """Modern color theme."""
-    PRIMARY = "cyan"
-    SUCCESS = "green"
-    WARNING = "yellow"
-    ERROR = "red"
-    DIM = "dim white"
-    BOLD = "bold white"
-    ACCENT = "bold cyan"
-    HEADER_BG = "on dark_blue"
-    MENU_SEL = "bold cyan on grey11"
-    MENU_DIM = "grey50"
 
 # ─── Helpers ──────────────────────────────────────────────────────────
 
@@ -101,7 +89,7 @@ def _first_key() -> str:
     return ""
 
 def wait_key(prompt: str = "Press Enter to continue...") -> None:
-    console.print(f"\n  [dim]{prompt}[/dim]", end="")
+    console.print(f"\n  {prompt}", end="")
     try:
         input()
     except (EOFError, KeyboardInterrupt):
@@ -110,111 +98,236 @@ def wait_key(prompt: str = "Press Enter to continue...") -> None:
 def clear():
     os.system("cls" if os.name == "nt" else "clear")
 
-# ─── Modern UI Components ─────────────────────────────────────────────
+# ─── Visual Components ────────────────────────────────────────────────
 
-def draw_banner():
-    """Draw modern banner."""
-    banner = """
-  ╔═══════════════════════════════════════════════════╗
-  ║                                                   ║
-  ║   ██████╗ ██████╗ ██╗██╗   ██╗███████╗███████╗  ║
-  ║  ██╔════╝██╔═══██╗██║██║   ██║██╔════╝██╔════╝  ║
-  ║  ██║     ██║   ██║██║██║   ██║█████╗  ███████╗  ║
-  ║  ██║     ██║   ██║██║╚██╗ ██╔╝██╔══╝  ╚════██║  ║
-  ║  ╚██████╗╚██████╔╝██║ ╚████╔╝ ███████╗███████║  ║
-  ║   ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝  ╚══════╝╚══════╝  ║
-  ║                                                   ║
-  ║   [bold cyan]AI Model Farm Tool[/bold cyan]                          ║
-  ║   [dim]v2.1 — 32 Free Models[/dim]                      ║
-  ║                                                   ║
-  ╚═══════════════════════════════════════════════════╝
-"""
-    console.print(banner, style="white")
+def make_bar(percent: float, width: int = 30, filled: str = "█", empty: str = "░") -> str:
+    """Create a visual progress bar."""
+    filled_count = int(width * min(percent, 1.0))
+    empty_count = width - filled_count
+    if percent >= 0.8:
+        color = "green"
+    elif percent >= 0.5:
+        color = "yellow"
+    else:
+        color = "red"
+    return f"[{color}]{filled * filled_count}[/{color}][dim]{empty * empty_count}[/dim]"
 
-def draw_status_bar():
-    """Draw status bar with key count."""
+def make_sparkline(values: list[int], width: int = 20) -> str:
+    """Create a sparkline chart."""
+    if not values:
+        return "[dim]No data[/dim]"
+    chars = " ▁▂▃▄▅▆▇█"
+    max_val = max(values) if max(values) > 0 else 1
+    sparkline = ""
+    for val in values[-width:]:
+        idx = int((val / max_val) * (len(chars) - 1))
+        sparkline += f"[cyan]{chars[idx]}[/cyan]"
+    return sparkline
+
+def make_bar_chart(values: list[int], width: int = 20, height: int = 5) -> str:
+    """Create a vertical bar chart."""
+    if not values:
+        return "[dim]No data[/dim]"
+    max_val = max(values) if max(values) > 0 else 1
+    chart_lines = []
+    for row in range(height - 1, -1, -1):
+        line = "  "
+        threshold = (row + 1) * max_val / height
+        for val in values[-width:]:
+            if val >= threshold:
+                line += "[cyan]█[/cyan]"
+            else:
+                line += " "
+        chart_lines.append(line)
+    return "\n".join(chart_lines)
+
+def draw_header():
+    """Draw the main header with status."""
     keys = count_keys()
+    state = load_state("output")
+    accounts = state.get("accounts", [])
+    ok = len([a for a in accounts if a.get("success")])
+    failed = len([a for a in accounts if not a.get("success")])
     db = find_9router_db()
-    db_status = "[green]Connected[/green]" if db else "[red]Not found[/red]"
-    console.print(f"  [dim]Keys: [bold]{keys}[/bold] | DB: {db_status}[/dim]\n")
 
-def draw_menu(options: list[tuple[str, str, str]], selected: int = -1):
-    """Draw modern menu with descriptions."""
-    for i, (num, title, desc) in enumerate(options):
-        if i == selected:
-            console.print(f"  [bold white on grey11]  {num}  {title:<20}[/bold white on grey11] [dim]{desc}[/dim]")
-        else:
-            console.print(f"  [cyan]{num}[/cyan]  [white]{title}[/white]  [dim]{desc}[/dim]")
+    # Status bar
+    status = Table(box=None, show_header=False, padding=(0, 1))
+    status.add_column("keys", style="bold cyan")
+    status.add_column("ok", style="bold green")
+    status.add_column("fail", style="bold red")
+    status.add_column("db", style="bold yellow" if db else "dim")
+    status.add_row(
+        f"  KEYS: {keys}",
+        f"  OK: {ok}",
+        f"  FAIL: {failed}",
+        f"  DB: {'Connected' if db else 'Not found'}",
+    )
+    console.print(status)
     console.print()
 
-def prompt_input(label: str, default: str = "", password: bool = False) -> str:
-    """Modern input prompt."""
-    default_str = f" [dim]({default})[/dim]" if default else ""
-    try:
-        val = input(f"  [cyan]→[/cyan] {label}{default_str}: ").strip()
-    except (EOFError, KeyboardInterrupt):
-        return default
-    return val if val else default
+def draw_dashboard():
+    """Draw the main visual dashboard."""
+    clear()
 
-def prompt_choice(label: str, options: list[str], default: int = 0) -> str:
-    """Choice prompt with numbered options."""
-    console.print(f"\n  [bold]{label}[/bold]")
-    for i, opt in enumerate(options, 1):
-        marker = "[bold cyan]>[/bold cyan]" if i - 1 == default else " "
-        console.print(f"  {marker} [cyan]{i}[/cyan] {opt}")
-    try:
-        raw = input("\n  [cyan]→[/cyan] Pilih: ").strip()
-    except (EOFError, KeyboardInterrupt):
-        return options[default]
-    if raw.isdigit() and 1 <= int(raw) <= len(options):
-        return options[int(raw) - 1]
-    return options[default]
+    # Header banner
+    console.print(Panel(
+        Text("BLACKBOX.AI FARM", style="bold white", justify="center"),
+        subtitle="[dim]AI Model Farm Tool v2.1 | 32 Free Models[/dim]",
+        box=box.DOUBLE,
+        border_style="cyan",
+        width=60,
+    ))
+
+    draw_header()
+
+    # Stats panels
+    state = load_state("output")
+    accounts = state.get("accounts", [])
+    ok = len([a for a in accounts if a.get("success")])
+    failed = len([a for a in accounts if not a.get("success")])
+    total = state.get("target", 0)
+    keys = count_keys()
+
+    # Progress bar
+    if total > 0:
+        percent = ok / total if total > 0 else 0
+        bar = make_bar(percent, 30)
+        console.print(f"  Progress: {bar} {int(percent*100)}%")
+        console.print()
+    else:
+        console.print("  [dim]No registrations yet[/dim]\n")
+
+    # Stats grid
+    stats = Table(box=box.ROUNDED, show_header=False, padding=(0, 2), width=60)
+    stats.add_column("stat", style="bold")
+    stats.add_column("val", justify="right")
+    stats.add_row("Total Target", str(total))
+    stats.add_row("[green]Success[/green]", f"[green]{ok}[/green]")
+    stats.add_row("[red]Failed[/red]", f"[red]{failed}[/red]")
+    stats.add_row("[cyan]Keys Harvested[/cyan]", f"[cyan]{keys}[/cyan]")
+    console.print(stats)
+    console.print()
+
+    # Mini chart (last 10 runs)
+    recent = accounts[-10:] if accounts else []
+    if recent:
+        success_per_run = [1 if a.get("success") else 0 for a in recent]
+        console.print("  [dim]Recent Activity:[/dim]")
+        console.print(make_mini_chart(success_per_run, width=20, height=4))
+        console.print()
+
+    # Menu
+    console.print(Panel(
+        Text("MAIN MENU", style="bold white", justify="center"),
+        box=box.SIMPLE,
+        border_style="dim",
+        width=60,
+    ))
+
+    menu = Table(box=None, show_header=False, padding=(0, 2), width=60)
+    menu.add_column("num", style="bold cyan", width=4)
+    menu.add_column("cmd", style="bold white", width=18)
+    menu.add_column("desc", style="dim")
+    menu.add_row("1", "REGISTER", "Buat akun baru & harvest API keys")
+    menu.add_row("2", "TEST MODELS", "Cek model mana yang work")
+    menu.add_row("3", "VIEW KEYS", "Lihat semua API keys")
+    menu.add_row("4", "EXPORT", "Export keys ke file")
+    menu.add_row("5", "INJECT DB", "Masukkan keys ke provider database")
+    menu.add_row("6", "STATUS", "Lihat status detail")
+    menu.add_row("7", "QUIT", "Keluar dari aplikasi")
+    console.print(menu)
+
+def draw_register_header():
+    """Draw register menu header."""
+    console.print(Panel(
+        Text("REGISTER ACCOUNTS", style="bold white", justify="center"),
+        subtitle="[dim]Batch register Blackbox.ai accounts[/dim]",
+        box=box.DOUBLE,
+        border_style="green",
+        width=60,
+    ))
+
+def draw_test_header():
+    """Draw test menu header."""
+    console.print(Panel(
+        Text("TEST MODELS", style="bold white", justify="center"),
+        subtitle="[dim]Verify which AI models are available[/dim]",
+        box=box.DOUBLE,
+        border_style="blue",
+        width=60,
+    ))
+
+def draw_keys_header():
+    """Draw keys menu header."""
+    console.print(Panel(
+        Text("HARVESTED KEYS", style="bold white", justify="center"),
+        subtitle="[dim]All API keys from registered accounts[/dim]",
+        box=box.DOUBLE,
+        border_style="yellow",
+        width=60,
+    ))
+
+def draw_export_header():
+    """Draw export menu header."""
+    console.print(Panel(
+        Text("EXPORT KEYS", style="bold white", justify="center"),
+        subtitle="[dim]Export keys to various formats[/dim]",
+        box=box.DOUBLE,
+        border_style="magenta",
+        width=60,
+    ))
+
+def draw_inject_header():
+    """Draw inject menu header."""
+    console.print(Panel(
+        Text("INJECT TO DATABASE", style="bold white", justify="center"),
+        subtitle="[dim]Push keys to provider database[/dim]",
+        box=box.DOUBLE,
+        border_style="yellow",
+        width=60,
+    ))
+
+def draw_status_header():
+    """Draw status menu header."""
+    console.print(Panel(
+        Text("RUN STATUS", style="bold white", justify="center"),
+        subtitle="[dim]Detailed registration history[/dim]",
+        box=box.DOUBLE,
+        border_style="cyan",
+        width=60,
+    ))
 
 # ─── Main Menu ────────────────────────────────────────────────────────
 
 def main_menu() -> str | None:
-    """Modern main menu."""
-    clear()
-    draw_banner()
-    draw_status_bar()
+    """Main menu loop."""
+    while True:
+        draw_dashboard()
 
-    options = [
-        ("1", "Register", "Buat akun baru & harvest API keys"),
-        ("2", "Test Models", "Cek model mana yang work"),
-        ("3", "View Keys", "Lihat semua API keys"),
-        ("4", "Export", "Export keys ke file"),
-        ("5", "Inject 9Router", "Masukkan keys ke 9Router DB"),
-        ("6", "Status", "Lihat status terakhir"),
-        ("7", "Quit", "Keluar dari aplikasi"),
-    ]
+        try:
+            raw = input("\n  Pilih [1-7]: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return "quit"
 
-    draw_menu(options)
-
-    try:
-        raw = input("  [cyan]→[/cyan] Pilih [1-7]: ").strip()
-    except (EOFError, KeyboardInterrupt):
-        return "quit"
-
-    if raw in ("1", "reg"):
-        return "reg"
-    elif raw in ("2", "test"):
-        return "test"
-    elif raw in ("3", "keys"):
-        return "keys"
-    elif raw in ("4", "export"):
-        return "export"
-    elif raw in ("5", "inject"):
-        return "inject"
-    elif raw in ("6", "status"):
-        return "status"
-    elif raw in ("7", "q", "x", "quit"):
-        return "quit"
-    return None
+        if raw in ("1", "reg"):
+            return "reg"
+        elif raw in ("2", "test"):
+            return "test"
+        elif raw in ("3", "keys"):
+            return "keys"
+        elif raw in ("4", "export"):
+            return "export"
+        elif raw in ("5", "inject"):
+            return "inject"
+        elif raw in ("6", "status"):
+            return "status"
+        elif raw in ("7", "q", "x", "quit"):
+            return "quit"
 
 # ─── Register Menu ────────────────────────────────────────────────────
 
 def menu_register():
-    """Modern register menu."""
+    """Register menu."""
     count = 10
     workers = 3
     headless = True
@@ -225,39 +338,40 @@ def menu_register():
 
     while True:
         clear()
-        console.print(Panel(
-            Text("Register New Accounts", style="bold cyan"),
-            box=box.ROUNDED,
-            width=50,
-        ))
+        draw_register_header()
 
         if done > 0:
             console.print(f"  [dim]Previously completed: {done} accounts[/dim]\n")
 
-        # Settings display
-        table = Table(box=None, show_header=False, padding=(0, 2))
-        table.add_column("key", style="dim")
-        table.add_column("val", style="bold")
-        table.add_row("Count:", str(count))
-        table.add_row("Workers:", str(workers))
-        table.add_row("Headless:", "ON" if headless else "OFF")
-        table.add_row("Domain:", domain)
-        console.print(table)
+        # Settings
+        settings = Table(box=box.ROUNDED, show_header=False, padding=(0, 2), width=60)
+        settings.add_column("key", style="dim", width=15)
+        settings.add_column("val", style="bold")
+        settings.add_row("Count:", str(count))
+        settings.add_row("Workers:", str(workers))
+        settings.add_row("Headless:", "[green]ON[/green]" if headless else "[red]OFF[/red]")
+        settings.add_row("Domain:", domain)
+        console.print(settings)
         console.print()
 
         # Menu
-        console.print("  [cyan]1[/cyan]  [bold]START[/bold] — Register baru")
+        menu = Table(box=None, show_header=False, padding=(0, 2), width=60)
+        menu.add_column("num", style="bold green", width=4)
+        menu.add_column("cmd", style="bold white", width=18)
+        menu.add_column("desc", style="dim")
+        menu.add_row("1", "START NEW", "Register akun baru dari awal")
         if done > 0:
-            console.print("  [cyan]2[/cyan]  [bold]RESUME[/bold] — Lanjut dari sebelumnya")
-        console.print("  [cyan]3[/cyan]  Edit Count")
-        console.print("  [cyan]4[/cyan]  Edit Workers")
-        console.print("  [cyan]5[/cyan]  Toggle Headless")
-        console.print("  [cyan]6[/cyan]  Edit Domain")
-        console.print("  [cyan]7[/cyan]  Back")
+            menu.add_row("2", "RESUME", f"Lanjut dari {done} akun sebelumnya")
+        menu.add_row("3", "CHANGE COUNT", f"Jumlah akun (sekarang: {count})")
+        menu.add_row("4", "CHANGE WORKERS", f"Concurrent browsers (sekarang: {workers})")
+        menu.add_row("5", "TOGGLE HEADLESS", f"Browser visible (sekarang: {'OFF' if headless else 'ON'})")
+        menu.add_row("6", "CHANGE DOMAIN", f"Email domain (sekarang: {domain})")
+        menu.add_row("7", "BACK", "Kembali ke menu utama")
+        console.print(menu)
         console.print()
 
         try:
-            raw = input("  [cyan]→[/cyan] Pilih: ").strip()
+            raw = input("  Pilih: ").strip()
         except (EOFError, KeyboardInterrupt):
             return
 
@@ -268,15 +382,15 @@ def menu_register():
             _do_register(count, workers, headless, domain, resume=True)
             return
         elif raw == "3":
-            val = prompt_input("Count", str(count))
+            val = input(f"  Count [{count}]: ").strip()
             if val.isdigit(): count = max(1, int(val))
         elif raw == "4":
-            val = prompt_input("Workers", str(workers))
+            val = input(f"  Workers [{workers}]: ").strip()
             if val.isdigit(): workers = max(1, int(val))
         elif raw == "5":
             headless = not headless
         elif raw == "6":
-            val = prompt_input("Domain", domain)
+            val = input(f"  Domain [{domain}]: ").strip()
             if val: domain = val
         elif raw in ("7", "q", "x", "b"):
             return
@@ -307,17 +421,17 @@ def _do_register(count: int, workers: int, headless: bool, domain: str, resume: 
         ok = [a for a in accounts if a.get("success")]
         console.print(f"\n  [green]Done: {len(ok)} succeeded, {len(accounts) - len(ok)} failed[/green]")
 
-        # Auto-inject keys to 9Router
+        # Auto-inject keys to DB
         if ok:
             db = find_9router_db()
             if db:
                 try:
                     injected = inject_keys("output/keys.txt", str(db))
-                    console.print(f"  [green]Auto-injected {injected} keys to 9Router![/green]")
+                    console.print(f"  [green]Auto-injected {injected} keys to database![/green]")
                 except Exception as e:
                     console.print(f"  [yellow]Auto-inject failed: {e}[/yellow]")
             else:
-                console.print("  [dim]9Router DB not found, skipping auto-inject.[/dim]")
+                console.print("  [dim]Database not found, skipping auto-inject.[/dim]")
 
         wait_key()
 
@@ -373,11 +487,7 @@ async def _drive(cfg, count, dashboard, state):
 def menu_keys():
     """View harvested keys."""
     clear()
-    console.print(Panel(
-        Text("Harvested API Keys", style="bold cyan"),
-        box=box.ROUNDED,
-        width=50,
-    ))
+    draw_keys_header()
 
     p = Path("output/keys.txt")
     if not p.exists():
@@ -388,10 +498,10 @@ def menu_keys():
     lines = [l for l in p.read_text(encoding="utf-8").splitlines() if l.strip()]
     console.print(f"  [bold]Total: {len(lines)} keys[/bold]\n")
 
-    table = Table(box=box.SIMPLE_HEAVY, show_header=True)
+    table = Table(box=box.ROUNDED, show_header=True, border_style="yellow")
     table.add_column("#", style="dim", width=4)
-    table.add_column("Email", width=30)
-    table.add_column("API Key", width=30)
+    table.add_column("Email", width=30, style="white")
+    table.add_column("API Key", width=30, style="cyan")
 
     for i, line in enumerate(lines[:50], 1):
         parts = line.split(":")
@@ -411,17 +521,13 @@ def menu_keys():
 def menu_test():
     """Test available models."""
     clear()
-    console.print(Panel(
-        Text("Test AI Models", style="bold cyan"),
-        box=box.ROUNDED,
-        width=50,
-    ))
+    draw_test_header()
 
     key = _first_key()
     if key:
         console.print(f"  Using key: [dim]{key[:20]}...[/dim]")
     else:
-        key = prompt_input("API Key")
+        key = input("  API Key: ").strip()
         if not key:
             console.print("  [red]No key provided[/red]")
             wait_key()
@@ -438,7 +544,12 @@ def menu_test():
     ok = [r for r in results if r.ok]
     fail = [r for r in results if not r.ok]
 
-    table = Table(box=box.SIMPLE_HEAVY, show_header=True, title=f"Results: {len(ok)} OK / {len(fail)} FAIL")
+    # Results with progress
+    console.print(f"\n  Results: [green]{len(ok)} OK[/green] / [red]{len(fail)} FAIL[/red]")
+    bar = make_bar(len(ok) / len(results) if results else 0, 30)
+    console.print(f"  Success Rate: {bar}\n")
+
+    table = Table(box=box.ROUNDED, show_header=True, border_style="blue")
     table.add_column("Status", width=8)
     table.add_column("Model", width=40)
     for r in results:
@@ -460,11 +571,7 @@ def menu_test():
 def menu_export():
     """Export keys to file."""
     clear()
-    console.print(Panel(
-        Text("Export Keys", style="bold cyan"),
-        box=box.ROUNDED,
-        width=50,
-    ))
+    draw_export_header()
 
     state = load_state("output")
     accounts = [a for a in state.get("accounts", []) if a.get("api_key")]
@@ -474,15 +581,21 @@ def menu_export():
         return
 
     console.print(f"  [bold]{len(accounts)} accounts ready[/bold]\n")
-    console.print("  [cyan]1[/cyan]  Export TXT")
-    console.print("  [cyan]2[/cyan]  Export JSON")
-    console.print("  [cyan]3[/cyan]  Export CSV")
-    console.print("  [cyan]4[/cyan]  Export ALL formats")
-    console.print("  [cyan]5[/cyan]  Back")
+
+    menu = Table(box=None, show_header=False, padding=(0, 2), width=60)
+    menu.add_column("num", style="bold magenta", width=4)
+    menu.add_column("cmd", style="bold white", width=18)
+    menu.add_column("desc", style="dim")
+    menu.add_row("1", "TXT", "Plain text format")
+    menu.add_row("2", "JSON", "Structured JSON format")
+    menu.add_row("3", "CSV", "Spreadsheet format")
+    menu.add_row("4", "ALL FORMATS", "Export ke semua format")
+    menu.add_row("5", "BACK", "Kembali ke menu utama")
+    console.print(menu)
     console.print()
 
     try:
-        raw = input("  [cyan]→[/cyan] Pilih: ").strip()
+        raw = input("  Pilih: ").strip()
     except (EOFError, KeyboardInterrupt):
         return
 
@@ -490,21 +603,17 @@ def menu_export():
         written = export_all("output", accounts)
         console.print()
         for fmt, path in written.items():
-            console.print(f"  [green]{fmt.upper()}[/green] → {path}")
+            console.print(f"  [green]{fmt.upper()}[/green] -> {path}")
         wait_key()
     elif raw in ("5", "q", "x", "b"):
         return
 
-# ─── Inject to 9Router ────────────────────────────────────────────────
+# ─── Inject to Database ───────────────────────────────────────────────
 
 def menu_inject():
     """Inject keys to provider database."""
     clear()
-    console.print(Panel(
-        Text("Inject to Database", style="bold cyan"),
-        box=box.ROUNDED,
-        width=50,
-    ))
+    draw_inject_header()
 
     db = find_9router_db()
     if not db:
@@ -524,23 +633,24 @@ def menu_inject():
 
     while True:
         clear()
-        console.print(Panel(
-            Text("Inject to Database", style="bold cyan"),
-            box=box.ROUNDED,
-            width=50,
-        ))
+        draw_inject_header()
         console.print(f"  DB: [dim]{db}[/dim]")
         console.print(f"  Keys ready: [bold]{len(lines)}[/bold]")
         console.print(f"  Already injected: [bold]{len(existing)}[/bold]\n")
 
-        console.print("  [cyan]1[/cyan]  INJECT all keys")
-        console.print("  [cyan]2[/cyan]  VIEW injected keys")
-        console.print("  [cyan]3[/cyan]  REMOVE all keys")
-        console.print("  [cyan]4[/cyan]  Back")
+        menu = Table(box=None, show_header=False, padding=(0, 2), width=60)
+        menu.add_column("num", style="bold yellow", width=4)
+        menu.add_column("cmd", style="bold white", width=18)
+        menu.add_column("desc", style="dim")
+        menu.add_row("1", "INJECT ALL", "Masukkan semua keys ke database")
+        menu.add_row("2", "VIEW INJECTED", "Lihat keys yang sudah ada")
+        menu.add_row("3", "REMOVE ALL", "Hapus semua keys dari database")
+        menu.add_row("4", "BACK", "Kembali ke menu utama")
+        console.print(menu)
         console.print()
 
         try:
-            raw = input("  [cyan]→[/cyan] Pilih: ").strip()
+            raw = input("  Pilih: ").strip()
         except (EOFError, KeyboardInterrupt):
             return
 
@@ -554,12 +664,12 @@ def menu_inject():
             wait_key()
         elif raw == "2":
             clear()
-            console.print(Panel(Text("Injected Keys", style="bold cyan"), box=box.ROUNDED, width=50))
+            draw_inject_header()
             existing = list_injected(str(db))
             if not existing:
                 console.print("  [dim]No keys in database.[/dim]")
             else:
-                table = Table(box=box.SIMPLE_HEAVY, show_header=True)
+                table = Table(box=box.ROUNDED, show_header=True, border_style="yellow")
                 table.add_column("#", style="dim", width=4)
                 table.add_column("ID", width=25)
                 table.add_column("Email", width=30)
@@ -580,30 +690,31 @@ def menu_inject():
 def menu_status():
     """Show run status."""
     clear()
-    console.print(Panel(
-        Text("Run Status", style="bold cyan"),
-        box=box.ROUNDED,
-        width=50,
-    ))
+    draw_status_header()
 
     state = load_state("output")
     accounts = state.get("accounts", [])
     ok = [a for a in accounts if a.get("success")]
     failed = [a for a in accounts if not a.get("success")]
 
-    table = Table(box=None, show_header=False, padding=(0, 2))
-    table.add_column("key", style="dim")
-    table.add_column("val", style="bold")
-    table.add_row("Target:", str(state.get("target", 0)))
-    table.add_row("Success:", f"[green]{len(ok)}[/green]")
-    table.add_row("Failed:", f"[red]{len(failed)}[/red]")
-    table.add_row("Keys on disk:", str(count_keys()))
-    console.print(table)
+    # Stats panel
+    stats = Table(box=box.ROUNDED, show_header=False, padding=(0, 2), width=60)
+    stats.add_column("key", style="dim", width=15)
+    stats.add_column("val", style="bold")
+    stats.add_row("Target:", str(state.get("target", 0)))
+    stats.add_row("[green]Success:[/green]", f"[green]{len(ok)}[/green]")
+    stats.add_row("[red]Failed:[/red]", f"[red]{len(failed)}[/red]")
+    stats.add_row("[cyan]Keys on disk:[/cyan]", f"[cyan]{count_keys()}[/cyan]")
+    console.print(stats)
 
     if failed:
         console.print("\n  [bold]Recent failures:[/bold]")
+        fail_table = Table(box=None, show_header=False, padding=(0, 1), width=60)
+        fail_table.add_column("email", style="red", width=30)
+        fail_table.add_column("error", style="dim")
         for a in failed[-5:]:
-            console.print(f"    [red]{a.get('email', '?')[:30]}[/red]: {a.get('error', '?')[:50]}")
+            fail_table.add_row(a.get("email", "?")[:28], a.get("error", "?")[:50])
+        console.print(fail_table)
 
     wait_key()
 
