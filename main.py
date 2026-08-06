@@ -1,4 +1,4 @@
-"""Blackbox.ai Farm — Professional Dashboard TUI."""
+"""Blackbox.ai Farm — Modern Dashboard TUI."""
 from __future__ import annotations
 
 import asyncio
@@ -92,6 +92,15 @@ def progress_bar(percent, width=30, color="green"):
     empty = width - filled
     return f"[{color}]{'=' * filled}[/{color}][dim]{'-' * empty}[/dim]"
 
+def mini_chart(values, width=20):
+    if not values: return "[dim]No data[/dim]"
+    max_val = max(values) if max(values) > 0 else 1
+    bars = []
+    for v in values[-width:]:
+        h = int((v / max_val) * 4) if v > 0 else 0
+        bars.append([" ", ".", "o", "O", "#"][h])
+    return "".join(bars)
+
 def draw_dashboard():
     clear()
     state = load_state("output")
@@ -102,68 +111,51 @@ def draw_dashboard():
     keys = count_keys()
     db = find_9router_db()
 
-    # Header panel
-    header = Panel(
+    # Header
+    console.print(Panel(
         Text("BLACKBOX.AI FARM", style="bold white", justify="center"),
         subtitle="AI Model Farm Tool v2.1 | 32 Free Models",
         box=box.DOUBLE,
         border_style="cyan",
-    )
-    console.print(header)
+    ))
 
-    # Stats panels in columns
-    stats_left = Table(box=None, show_header=False, padding=(0, 2))
-    stats_left.add_column("k", style="dim")
-    stats_left.add_column("v", style="bold")
-    stats_left.add_row("Keys", str(keys))
-    stats_left.add_row("[green]Success[/green]", f"[green]{ok}[/green]")
-
-    stats_right = Table(box=None, show_header=False, padding=(0, 2))
-    stats_right.add_column("k", style="dim")
-    stats_right.add_column("v", style="bold")
-    stats_right.add_row("[red]Failed[/red]", f"[red]{fail}[/red]")
-    stats_right.add_row("DB", "Connected" if db else "Not found")
-
-    console.print(Columns([
-        Panel(stats_left, border_style="green", width=38),
-        Panel(stats_right, border_style="red", width=38),
-    ]))
+    # Stats row
+    stats = Table(box=None, show_header=False, padding=(0, 2))
+    stats.add_column("k", style="dim")
+    stats.add_column("v", style="bold")
+    stats.add_row("Keys", str(keys))
+    stats.add_row("[green]Success[/green]", f"[green]{ok}[/green]")
+    stats.add_row("[red]Failed[/red]", f"[red]{fail}[/red]")
+    stats.add_row("DB", "Connected" if db else "Not found")
+    console.print(stats)
     console.print()
 
-    # Progress panel
+    # Progress
     if total > 0:
         pct = ok / total
-        progress = Panel(
-            f"  Registration: {progress_bar(pct)} {ok}/{total} ({int(pct*100)}%)",
-            border_style="yellow",
-        )
-        console.print(progress)
+        console.print(f"  Registration: {progress_bar(pct)} {ok}/{total} ({int(pct*100)}%)")
     else:
-        console.print(Panel("  No registration data yet", border_style="dim"))
+        console.print("  Registration: No data yet")
     console.print()
 
-    # Recent activity panel
-    recent = accounts[-15:] if accounts else []
+    # Recent activity
+    recent = accounts[-20:] if accounts else []
     if recent:
         chart = " ".join(["[green]#[/green]" if a.get("success") else "[red]X[/red]" for a in recent])
-        activity = Panel(f"  Last {len(recent)}: {chart}", border_style="cyan")
-        console.print(activity)
+        console.print(f"  Last {len(recent)}: {chart}")
         console.print()
 
-    # Menu panel
-    menu = Table(box=None, show_header=False, padding=(0, 2))
-    menu.add_column("num", style="bold cyan", width=4)
-    menu.add_column("cmd", style="bold white", width=18)
-    menu.add_column("desc", style="dim")
-    menu.add_row("1", "REGISTER", "Register new accounts and harvest API keys")
-    menu.add_row("2", "TEST MODELS", "Check which AI models are working")
-    menu.add_row("3", "VIEW KEYS", "Show all harvested API keys")
-    menu.add_row("4", "EXPORT", "Export keys to file (TXT/JSON/CSV)")
-    menu.add_row("5", "INJECT DB", "Push keys into 9router database")
-    menu.add_row("6", "STATUS", "Show detailed registration history")
-    menu.add_row("7", "QUIT", "Exit application")
-
-    console.print(Panel(menu, title="MAIN MENU", border_style="blue"))
+    # Menu
+    console.print("  MAIN MENU")
+    console.print("  " + "-" * 76)
+    console.print("  1  REGISTER      Register new accounts and harvest API keys")
+    console.print("  2  TEST MODELS   Check which AI models are working")
+    console.print("  3  VIEW KEYS     Show all harvested API keys")
+    console.print("  4  EXPORT        Export keys to file (TXT/JSON/CSV)")
+    console.print("  5  INJECT DB     Push keys into 9router database")
+    console.print("  6  STATUS        Show detailed registration history")
+    console.print("  7  QUIT          Exit application")
+    console.print("  " + "-" * 76)
 
 # ─── Main Menu ────────────────────────────────────────────────────────
 
@@ -277,7 +269,7 @@ def _do_register(count, workers, headless, domain, resume=False):
             if db:
                 try:
                     injected = inject_keys("output/keys.txt", str(db))
-                    console.print(f"  Auto-injected {injected} keys to database")
+                    console.print(f"  Auto-injected {injected} keys to 9router database")
                 except Exception as e:
                     console.print(f"  Auto-inject failed: {e}")
 
@@ -468,7 +460,7 @@ def menu_export():
 
 def menu_inject():
     clear()
-    console.print(Panel("INJECT TO DATABASE", box=box.DOUBLE, border_style="yellow"))
+    console.print(Panel("INJECT TO 9ROUTER", box=box.DOUBLE, border_style="yellow"))
 
     db = find_9router_db()
     if not db:
@@ -488,7 +480,7 @@ def menu_inject():
 
     while True:
         clear()
-        console.print(Panel("INJECT TO DATABASE", box=box.DOUBLE, border_style="yellow"))
+        console.print(Panel("INJECT TO 9ROUTER", box=box.DOUBLE, border_style="yellow"))
 
         stats = Table(box=None, show_header=False, padding=(0, 2))
         stats.add_column("k", style="dim", width=20)
