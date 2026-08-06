@@ -34,7 +34,7 @@ from providers.blackbox import AccountResult, BlackboxClient
 from providers.tempmail import generate_email
 
 STATE_FILE = "state.json"
-console = Console()
+console = Console(width=80)
 
 # ─── Helpers ──────────────────────────────────────────────────────────
 
@@ -86,7 +86,8 @@ def clear():
 
 def bar(percent, width=25):
     filled = int(width * min(percent, 1.0))
-    return f"{'#' * filled}{'.' * (width - filled)}"
+    empty = width - filled
+    return f"{'=' * filled}{'-' * empty}"
 
 def draw_dashboard():
     clear()

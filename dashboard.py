@@ -74,7 +74,7 @@ class FarmDashboard:
         self._task = self._progress.add_task(
             "Farm", total=self._total, done=0, failed=0, speed="0/s", eta="?"
         )
-        self._live = Live(self._build(), console=self._console, refresh_per_second=4, screen=False)
+        self._live = Live(self._build(), console=self._console, refresh_per_second=4, screen=True)
         self._live.start()
 
     def stop(self) -> None:
