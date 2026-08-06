@@ -13,12 +13,12 @@ from rich.table import Table
 from rich.text import Text
 
 _STATUS_ICONS = {
-    "idle": "⏳",
-    "registering": "📝",
-    "waiting_verify": "📧",
-    "creating_key": "🔑",
-    "success": "🟢",
-    "failed": "🔴",
+    "idle": "[ ]",
+    "registering": "[>]",
+    "waiting_verify": "[?]",
+    "creating_key": "[*]",
+    "success": "[OK]",
+    "failed": "[!!]",
 }
 
 
@@ -74,12 +74,15 @@ class FarmDashboard:
         self._task = self._progress.add_task(
             "Farm", total=self._total, done=0, failed=0, speed="0/s", eta="?"
         )
-        self._live = Live(self._build(), console=self._console, refresh_per_second=4, screen=True)
+        self._live = Live(self._build(), console=self._console, refresh_per_second=4, screen=False)
         self._live.start()
 
     def stop(self) -> None:
         if self._live:
-            self._live.stop()
+            try:
+                self._live.stop()
+            except Exception:
+                pass
             self._live = None
 
     def update_worker(self, worker_id: int, **changes: object) -> None:
