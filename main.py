@@ -355,32 +355,57 @@ def menu_test():
             wait_key()
             return
 
-    console.print("\n  Testing 32 models... (takes ~30 seconds)\n")
-    try:
-        results = asyncio.run(test_all(key, WORKING_MODELS[:32]))
-    except Exception as e:
-        console.print(f"  Error: {e}")
-        wait_key()
-        return
+    models = WORKING_MODELS[:32]
+    console.print(f"\n  Testing {len(models)} models...\n")
 
-    ok = [r for r in results if r.ok]
-    fail = [r for r in results if not r.ok]
-    pct = len(ok) / len(results) if results else 0
+    results = []
+    ok_count = 0
+    fail_count = 0
 
-    console.print(f"  Results: {len(ok)} OK / {len(fail)} FAIL")
-    console.print(f"  Success: [{bar(pct)}] {int(pct*100)}%\n")
+    # Test each model with live progress
+    for i, model in enumerate(models, 1):
+        # Show current test
+        console.print(f"  [{i:2d}/{len(models)}] {model:<45}", end="")
 
+        # Test model
+        try:
+            test_results = asyncio.run(test_all(key, [model]))
+            if test_results and test_results[0].ok:
+                console.print("[OK]")
+                ok_count += 1
+                results.append({"model": model, "ok": True})
+            else:
+                console.print("[FAIL]")
+                fail_count += 1
+                results.append({"model": model, "ok": False, "error": test_results[0].detail if test_results else "unknown"})
+        except Exception as e:
+            console.print(f"[ERR] {str(e)[:30]}")
+            fail_count += 1
+            results.append({"model": model, "ok": False, "error": str(e)[:50]})
+
+        # Show progress bar
+        pct = (i) / len(models)
+        console.print(f"  Progress: [{bar(pct)}] {i}/{len(models)} ({int(pct*100)}%)\n")
+
+    # Summary
+    console.print("\n" + "=" * 62)
+    console.print(f"  RESULTS: {ok_count} OK / {fail_count} FAIL")
+    console.print(f"  Success Rate: [{bar(ok_count/len(models))}] {int(ok_count/len(models)*100)}%")
+    console.print("=" * 62 + "\n")
+
+    # Results table
     table = Table(box=box.ROUNDED, show_header=True, border_style="blue")
     table.add_column("Status", width=8)
     table.add_column("Model", width=40)
     for r in results:
-        table.add_row("OK" if r.ok else "ERR", r.model)
+        table.add_row("OK" if r["ok"] else "ERR", r["model"])
     console.print(table)
 
+    # Save results
     Path("output").mkdir(exist_ok=True)
     Path("output/model_test.json").write_text(json.dumps({
-        "ok": [r.model for r in ok],
-        "fail": [{"model": r.model, "error": r.detail} for r in fail],
+        "ok": [r["model"] for r in results if r["ok"]],
+        "fail": [{"model": r["model"], "error": r.get("error", "")} for r in results if not r["ok"]],
     }, indent=2), encoding="utf-8")
     wait_key()
 
