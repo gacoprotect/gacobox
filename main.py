@@ -118,6 +118,21 @@ def draw_header():
         width=50,
     ))
 
+def prompt_choice(options: list[str], header: str = "") -> str:
+    """Simple numbered menu — works everywhere."""
+    if header:
+        console.print(f"\n  [bold]{header}[/bold]\n")
+    for i, label in enumerate(options, 1):
+        console.print(f"  [cyan]{i}[/cyan]  {label}")
+    console.print()
+    try:
+        raw = input("  Pilih: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return ""
+    if raw.isdigit() and 1 <= int(raw) <= len(options):
+        return options[int(raw) - 1]
+    return raw
+
 def main_menu() -> str | None:
     clear()
     draw_header()
@@ -131,68 +146,24 @@ def main_menu() -> str | None:
         ("Run Status", "status"),
         ("Quit", "quit"),
     ]
-    idx = 0
 
     while True:
         clear()
         draw_header()
+        console.print()
+        for i, (label, _) in enumerate(options, 1):
+            console.print(f"  [cyan]{i}[/cyan]  {label}")
+        console.print()
 
-        table = Table(box=box.SIMPLE, show_header=False, padding=(0, 2))
-        table.add_column("sel", style="bold cyan")
-        table.add_column("opt")
-        for i, (label, _) in enumerate(options):
-            sel = ">>>" if i == idx else "  "
-            style = "bold white" if i == idx else "dim"
-            table.add_row(sel, Text(label, style=style))
-        console.print(table)
-
-        ch = _getch()
-        if ch in ("up", "p", "w"):
-            idx = (idx - 1) % len(options)
-        elif ch in ("down", "n", "s"):
-            idx = (idx + 1) % len(options)
-        elif ch in ("enter",):
-            return options[idx][1]
-        elif ch in ("q", "escape", "x"):
+        try:
+            raw = input("  Pilih [1-7]: ").strip()
+        except (EOFError, KeyboardInterrupt):
             return "quit"
-        elif ch.isdigit() and 1 <= int(ch) <= len(options):
-            return options[int(ch) - 1][1]
 
-def _getch() -> str:
-    """Read a single keypress. Works on Windows + Unix."""
-    if os.name == "nt":
-        try:
-            import msvcrt
-            ch = msvcrt.getch()
-            if ch in (b"\x00", b"\xe0"):
-                ch2 = msvcrt.getch()
-                return {b"H": "up", b"P": "down", b"M": "right", b"K": "left"}.get(ch2, "")
-            return ch.decode("utf-8", errors="replace") if ch else ""
-        except Exception:
-            # Fallback: use input() for terminals that don't support msvcrt
-            try:
-                val = input().strip().lower()
-                if val in ("up", "p", "w"): return "up"
-                if val in ("down", "n", "s"): return "down"
-                if val in ("enter", ""): return "enter"
-                if val in ("q", "escape", "x"): return "escape"
-                return val
-            except (EOFError, KeyboardInterrupt):
-                return "escape"
-    else:
-        import tty, termios
-        fd = sys.stdin.fileno()
-        old = termios.tcgetattr(fd)
-        try:
-            tty.setraw(fd)
-            ch = sys.stdin.read(1)
-            if ch == "\x1b":
-                ch2 = sys.stdin.read(1)
-                ch3 = sys.stdin.read(1)
-                return {"[A": "up", "[B": "down", "[C": "right", "[D": "left"}.get(ch2 + ch3, "")
-            return ch
-        finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        if raw.isdigit() and 1 <= int(raw) <= len(options):
+            return options[int(raw) - 1][1]
+        elif raw.lower() in ("q", "x", "quit", "exit"):
+            return "quit"
 
 # ─── Register Menu ────────────────────────────────────────────────────
 
@@ -203,75 +174,55 @@ def menu_register():
     domain = "catchmail.io"
     key_name = "auto-farm-key"
 
+    state = load_state("output")
+    done = len(done_emails(state))
+
     while True:
         clear()
         console.print(Panel(Text("Register Accounts", style="bold cyan"), box=box.DOUBLE, width=50))
+        if done > 0:
+            console.print(f"  [dim]Previous run: {done} accounts completed[/dim]\n")
 
-        state = load_state("output")
-        done = len(done_emails(state))
+        console.print(f"  Count:    [cyan]{count}[/cyan]")
+        console.print(f"  Workers:  [cyan]{workers}[/cyan]")
+        console.print(f"  Headless: [cyan]{'ON' if headless else 'OFF'}[/cyan]")
+        console.print(f"  Domain:   [cyan]{domain}[/cyan]")
+        console.print(f"  Key Name: [cyan]{key_name}[/cyan]")
+        console.print()
+        console.print("  [cyan]1[/cyan]  START (New)")
+        if done > 0:
+            console.print("  [cyan]2[/cyan]  RESUME (Continue)")
+        console.print("  [cyan]3[/cyan]  Edit Count")
+        console.print("  [cyan]4[/cyan]  Edit Workers")
+        console.print("  [cyan]5[/cyan]  Toggle Headless")
+        console.print("  [cyan]6[/cyan]  Edit Domain")
+        console.print("  [cyan]7[/cyan]  Back")
+        console.print()
 
-        options = ["START (New)", "RESUME (Continue)", "Back"]
-        idx = 0
-        while True:
-            clear()
-            console.print(Panel(Text("Register Accounts", style="bold cyan"), box=box.DOUBLE, width=50))
-            if done > 0:
-                console.print(f"  [dim]Previous run: {done} accounts completed[/dim]\n")
+        try:
+            raw = input("  Pilih: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return
 
-            t = Table(box=box.SIMPLE, show_header=False)
-            t.add_column("sel", style="bold cyan")
-            t.add_column("field", style="bold")
-            t.add_column("value")
-            t.add_row("", "Count:", str(count))
-            t.add_row("", "Workers:", str(workers))
-            t.add_row("", "Headless:", "ON" if headless else "OFF")
-            t.add_row("", "Domain:", domain)
-            t.add_row("", "Key Name:", key_name)
-            console.print(t)
-            console.print()
-
-            for i, o in enumerate(options):
-                sel = ">>>" if i == idx else "  "
-                console.print(f"  {sel} {o}")
-
-            ch = _getch()
-            if ch in ("up", "p", "w"):
-                idx = (idx - 1) % len(options)
-            elif ch in ("down", "n", "s"):
-                idx = (idx + 1) % len(options)
-            elif ch in ("enter",):
-                if idx == 0:
-                    _do_register(count, workers, headless, domain, key_name, resume=False)
-                    return
-                elif idx == 1:
-                    if done == 0:
-                        console.print("  [yellow]No previous accounts to resume.[/yellow]")
-                        wait_key()
-                    else:
-                        _do_register(count, workers, headless, domain, key_name, resume=True)
-                        return
-                else:
-                    return
-            elif ch in ("q", "escape", "x"):
-                return
-            elif ch in ("1", "2", "3", "4", "5"):
-                field_idx = int(ch) - 1
-                if field_idx == 0:
-                    val = get_key_input("Count", str(count))
-                    try: count = max(1, int(val))
-                    except: pass
-                elif field_idx == 1:
-                    val = get_key_input("Workers", str(workers))
-                    try: workers = max(1, int(val))
-                    except: pass
-                elif field_idx == 2:
-                    headless = not headless
-                elif field_idx == 3:
-                    val = get_key_input("Domain", domain)
-                    if val: domain = val
-                elif field_idx == 4:
-                    val = get_key_input("Key Name", key_name)
-                    if val: key_name = val
+        if raw == "1":
+            _do_register(count, workers, headless, domain, key_name, resume=False)
+            return
+        elif raw == "2" and done > 0:
+            _do_register(count, workers, headless, domain, key_name, resume=True)
+            return
+        elif raw == "3":
+            val = input(f"  Count [{count}]: ").strip()
+            if val.isdigit(): count = max(1, int(val))
+        elif raw == "4":
+            val = input(f"  Workers [{workers}]: ").strip()
+            if val.isdigit(): workers = max(1, int(val))
+        elif raw == "5":
+            headless = not headless
+        elif raw == "6":
+            val = input(f"  Domain [{domain}]: ").strip()
+            if val: domain = val
+        elif raw in ("7", "q", "x", "b"):
+            return
 
 def _do_register(count: int, workers: int, headless: bool, domain: str, key_name: str = "auto-farm-key", resume: bool = False):
     cfg = Config(
@@ -444,28 +395,32 @@ def menu_export():
         wait_key()
         return
 
-    options = ["TXT", "JSON", "CSV", "ALL formats", "Back"]
-    idx = 0
-
     while True:
         clear()
         console.print(Panel(Text("Export Keys", style="bold cyan"), box=box.DOUBLE, width=50))
         console.print(f"  {len(accounts)} accounts ready\n")
-        for i, o in enumerate(options):
-            sel = ">>>" if i == idx else "  "
-            console.print(f"  {sel} {o}")
+        console.print("  [cyan]1[/cyan]  TXT")
+        console.print("  [cyan]2[/cyan]  JSON")
+        console.print("  [cyan]3[/cyan]  CSV")
+        console.print("  [cyan]4[/cyan]  ALL formats")
+        console.print("  [cyan]5[/cyan]  Back")
+        console.print()
 
-        ch = _getch()
-        if ch in ("up", "p", "w"): idx = (idx - 1) % len(options)
-        elif ch in ("down", "n", "s"): idx = (idx + 1) % len(options)
-        elif ch in ("enter",):
-            if idx == 4: return
+        try:
+            raw = input("  Pilih: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return
+
+        if raw in ("1", "2", "3", "4"):
+            fmt_map = {"1": "txt", "2": "json", "3": "csv", "4": "all"}
+            # export_all handles all formats
             written = export_all("output", accounts)
             for fmt, path in written.items():
                 console.print(f"  [green]{fmt.upper()}[/green] -> {path}")
             wait_key()
             return
-        elif ch in ("q", "escape", "x"): return
+        elif raw in ("5", "q", "x", "b"):
+            return
 
 # ─── Inject to 9Router ────────────────────────────────────────────────
 
@@ -475,13 +430,13 @@ def menu_inject():
 
     db = find_9router_db()
     if db:
-        console.print(f"  [green]Found 9Router DB:[/green] {db}")
+        console.print(f"  [green]Found DB:[/green] {db}")
     else:
         console.print("  [red]Provider DB not found![/red]")
         console.print("  Searched locations:")
         for p in _discover_db_paths():
             console.print(f"    {p}")
-        console.print("\n  Set PROVIDER_DB_PATH env var or pass --db-path.")
+        console.print("\n  Set PROVIDER_DB_PATH env var.")
         wait_key()
         return
 
@@ -493,62 +448,55 @@ def menu_inject():
         return
 
     lines = [l for l in p.read_text(encoding="utf-8").splitlines() if l.strip()]
-    console.print(f"  Keys to inject: {len(lines)}")
-
-    # Check existing
     existing = list_injected(str(db))
-    console.print(f"  Already in 9Router: {len(existing)}")
-
-    options = ["INJECT", "VIEW injected keys", "REMOVE all blackbox keys", "Back"]
-    idx = 0
 
     while True:
         clear()
-        console.print(Panel(Text("Inject to 9Router", style="bold cyan"), box=box.DOUBLE, width=50))
+        console.print(Panel(Text("Inject to Provider DB", style="bold cyan"), box=box.DOUBLE, width=50))
         console.print(f"  DB: {db}")
         console.print(f"  Keys ready: {len(lines)}")
         console.print(f"  Already injected: {len(existing)}\n")
+        console.print("  [cyan]1[/cyan]  INJECT all keys")
+        console.print("  [cyan]2[/cyan]  VIEW injected keys")
+        console.print("  [cyan]3[/cyan]  REMOVE all keys")
+        console.print("  [cyan]4[/cyan]  Back")
+        console.print()
 
-        for i, o in enumerate(options):
-            sel = ">>>" if i == idx else "  "
-            console.print(f"  {sel} {o}")
+        try:
+            raw = input("  Pilih: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return
 
-        ch = _getch()
-        if ch in ("up", "p", "w"): idx = (idx - 1) % len(options)
-        elif ch in ("down", "n", "s"): idx = (idx + 1) % len(options)
-        elif ch in ("enter",):
-            if idx == 0:  # INJECT
-                try:
-                    count = inject_keys("output/keys.txt", str(db))
-                    console.print(f"\n  [green]Injected {count} new keys![/green]")
-                    existing = list_injected(str(db))
-                except Exception as e:
-                    console.print(f"\n  [red]Error: {e}[/red]")
-                wait_key()
-            elif idx == 1:  # VIEW
-                clear()
-                console.print(Panel(Text("Injected Keys in 9Router", style="bold cyan"), box=box.DOUBLE, width=50))
+        if raw == "1":
+            try:
+                count = inject_keys("output/keys.txt", str(db))
+                console.print(f"\n  [green]Injected {count} new keys![/green]")
                 existing = list_injected(str(db))
-                if not existing:
-                    console.print("  [dim]No blackbox keys in 9Router.[/dim]")
-                else:
-                    table = Table(box=box.SIMPLE, show_header=True)
-                    table.add_column("#", style="dim")
-                    table.add_column("ID")
-                    table.add_column("Email")
-                    table.add_column("Status")
-                    for i, row in enumerate(existing, 1):
-                        table.add_row(str(i), row.get("id", "")[:20], row.get("email", "")[:25], row.get("status", ""))
-                    console.print(table)
-                wait_key()
-            elif idx == 2:  # REMOVE
-                count = remove_keys(str(db))
-                console.print(f"\n  [yellow]Removed {count} blackbox keys from 9Router.[/yellow]")
-                existing = list_injected(str(db))
-                wait_key()
-            elif idx == 3:  # BACK
-                return
-        elif ch in ("q", "escape", "x"): return
+            except Exception as e:
+                console.print(f"\n  [red]Error: {e}[/red]")
+            wait_key()
+        elif raw == "2":
+            clear()
+            console.print(Panel(Text("Injected Keys", style="bold cyan"), box=box.DOUBLE, width=50))
+            existing = list_injected(str(db))
+            if not existing:
+                console.print("  [dim]No keys in DB.[/dim]")
+            else:
+                table = Table(box=box.SIMPLE, show_header=True)
+                table.add_column("#", style="dim")
+                table.add_column("ID")
+                table.add_column("Email")
+                for i, row in enumerate(existing, 1):
+                    table.add_row(str(i), row.get("id", "")[:20], row.get("email", "")[:25])
+                console.print(table)
+            wait_key()
+        elif raw == "3":
+            count = remove_keys(str(db))
+            console.print(f"\n  [yellow]Removed {count} keys.[/yellow]")
+            existing = list_injected(str(db))
+            wait_key()
+        elif raw in ("4", "q", "x", "b"):
+            return
 
 import os
 from injector import _discover_db_paths
