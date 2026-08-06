@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Output (contains API keys — never commit)
+output/keys.txt
+output/keys.json
+output/keys.csv
+output/state.json
+output/model_test.json
+output/model_results.json
+output/captured_requests.json
+output/pipeline_result.json
+output/keys_page.png
+output/*.png
+
+# Playwright
+test-results/
+playwright-report/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Env
+.env
+.env.local
+*.env
+
+# Logs
+*.log
