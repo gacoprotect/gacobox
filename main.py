@@ -37,7 +37,7 @@ from providers.blackbox import AccountResult, BlackboxClient
 from providers.tempmail import generate_email
 
 STATE_FILE = "state.json"
-console = Console(width=80)
+console = Console(width=60)
 
 # ─── Helpers ──────────────────────────────────────────────────────────
 
@@ -147,15 +147,15 @@ def draw_dashboard():
 
     # Menu
     console.print("  MAIN MENU")
-    console.print("  " + "-" * 76)
-    console.print("  1  REGISTER      Register new accounts and harvest API keys")
+    console.print("  " + "-" * 56)
+    console.print("  1  REGISTER      Register new accounts & harvest API keys")
     console.print("  2  TEST MODELS   Check which AI models are working")
     console.print("  3  VIEW KEYS     Show all harvested API keys")
     console.print("  4  EXPORT        Export keys to file (TXT/JSON/CSV)")
     console.print("  5  INJECT DB     Push keys into 9router database")
     console.print("  6  STATUS        Show detailed registration history")
     console.print("  7  QUIT          Exit application")
-    console.print("  " + "-" * 76)
+    console.print("  " + "-" * 56)
 
 # ─── Main Menu ────────────────────────────────────────────────────────
 
