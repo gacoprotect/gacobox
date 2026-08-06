@@ -12,6 +12,10 @@ import time
 from pathlib import Path
 from typing import Any
 
+# Load .env file first
+from dotenv import load_dotenv
+load_dotenv()
+
 # Force UTF-8 on Windows
 if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")

@@ -7,6 +7,10 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+# Load .env file first
+from dotenv import load_dotenv
+load_dotenv()
+
 
 def _discover_db_paths() -> list[Path]:
     """Auto-discover database paths via env var or common locations."""
