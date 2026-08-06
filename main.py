@@ -159,7 +159,7 @@ def draw_dashboard():
     menu.add_row("2", "TEST MODELS", "Check which AI models are working")
     menu.add_row("3", "VIEW KEYS", "Show all harvested API keys")
     menu.add_row("4", "EXPORT", "Export keys to file (TXT/JSON/CSV)")
-    menu.add_row("5", "INJECT DB", "Push keys into provider database")
+    menu.add_row("5", "INJECT DB", "Push keys into 9router database")
     menu.add_row("6", "STATUS", "Show detailed registration history")
     menu.add_row("7", "QUIT", "Exit application")
 

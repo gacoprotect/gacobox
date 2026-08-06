@@ -1,4 +1,4 @@
-"""SQLite injector — masukkan harvested keys ke local provider database."""
+"""SQLite injector — masukkan harvested keys ke 9router database."""
 from __future__ import annotations
 
 import json
