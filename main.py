@@ -132,7 +132,7 @@ def draw_dashboard():
 
     # Progress
     if total > 0:
-        pct = ok / total
+        pct = min(ok / total, 1.0)
         console.print(f"  Registration: {progress_bar(pct)} {ok}/{total} ({int(pct*100)}%)")
     else:
         console.print("  Registration: No data yet")
