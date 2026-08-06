@@ -254,6 +254,19 @@ def _do_register(count: int, workers: int, headless: bool, domain: str, key_name
         accounts = state.get("accounts", [])
         ok = [a for a in accounts if a.get("success")]
         console.print(f"\n  Done: {len(ok)} succeeded, {len(accounts) - len(ok)} failed")
+
+        # Auto-inject keys to 9Router
+        if ok:
+            db = find_9router_db()
+            if db:
+                try:
+                    injected = inject_keys("output/keys.txt", str(db))
+                    console.print(f"  [green]Auto-injected {injected} keys to 9Router![/green]")
+                except Exception as e:
+                    console.print(f"  [yellow]Auto-inject failed: {e}[/yellow]")
+            else:
+                console.print("  [dim]9Router DB not found, skipping auto-inject.[/dim]")
+
         wait_key()
 
 async def _drive(cfg, count, dashboard, state):
