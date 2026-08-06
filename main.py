@@ -147,24 +147,38 @@ def main_menu() -> str | None:
         console.print(table)
 
         ch = _getch()
-        if ch in ("up", "p"):
+        if ch in ("up", "p", "w"):
             idx = (idx - 1) % len(options)
-        elif ch in ("down", "n"):
+        elif ch in ("down", "n", "s"):
             idx = (idx + 1) % len(options)
         elif ch in ("enter",):
             return options[idx][1]
-        elif ch in ("q", "escape"):
+        elif ch in ("q", "escape", "x"):
             return "quit"
+        elif ch.isdigit() and 1 <= int(ch) <= len(options):
+            return options[int(ch) - 1][1]
 
 def _getch() -> str:
     """Read a single keypress. Works on Windows + Unix."""
     if os.name == "nt":
-        import msvcrt
-        ch = msvcrt.getch()
-        if ch in (b"\x00", b"\xe0"):
-            ch2 = msvcrt.getch()
-            return {b"H": "up", b"P": "down", b"M": "right", b"K": "left"}.get(ch2, "")
-        return ch.decode("utf-8", errors="replace") if ch else ""
+        try:
+            import msvcrt
+            ch = msvcrt.getch()
+            if ch in (b"\x00", b"\xe0"):
+                ch2 = msvcrt.getch()
+                return {b"H": "up", b"P": "down", b"M": "right", b"K": "left"}.get(ch2, "")
+            return ch.decode("utf-8", errors="replace") if ch else ""
+        except Exception:
+            # Fallback: use input() for terminals that don't support msvcrt
+            try:
+                val = input().strip().lower()
+                if val in ("up", "p", "w"): return "up"
+                if val in ("down", "n", "s"): return "down"
+                if val in ("enter", ""): return "enter"
+                if val in ("q", "escape", "x"): return "escape"
+                return val
+            except (EOFError, KeyboardInterrupt):
+                return "escape"
     else:
         import tty, termios
         fd = sys.stdin.fileno()
@@ -221,9 +235,9 @@ def menu_register():
                 console.print(f"  {sel} {o}")
 
             ch = _getch()
-            if ch in ("up", "p"):
+            if ch in ("up", "p", "w"):
                 idx = (idx - 1) % len(options)
-            elif ch in ("down", "n"):
+            elif ch in ("down", "n", "s"):
                 idx = (idx + 1) % len(options)
             elif ch in ("enter",):
                 if idx == 0:
@@ -238,7 +252,7 @@ def menu_register():
                         return
                 else:
                     return
-            elif ch in ("q", "escape"):
+            elif ch in ("q", "escape", "x"):
                 return
             elif ch in ("1", "2", "3", "4", "5"):
                 field_idx = int(ch) - 1
@@ -442,8 +456,8 @@ def menu_export():
             console.print(f"  {sel} {o}")
 
         ch = _getch()
-        if ch in ("up", "p"): idx = (idx - 1) % len(options)
-        elif ch in ("down", "n"): idx = (idx + 1) % len(options)
+        if ch in ("up", "p", "w"): idx = (idx - 1) % len(options)
+        elif ch in ("down", "n", "s"): idx = (idx + 1) % len(options)
         elif ch in ("enter",):
             if idx == 4: return
             written = export_all("output", accounts)
@@ -451,7 +465,7 @@ def menu_export():
                 console.print(f"  [green]{fmt.upper()}[/green] -> {path}")
             wait_key()
             return
-        elif ch in ("q", "escape"): return
+        elif ch in ("q", "escape", "x"): return
 
 # ─── Inject to 9Router ────────────────────────────────────────────────
 
@@ -500,8 +514,8 @@ def menu_inject():
             console.print(f"  {sel} {o}")
 
         ch = _getch()
-        if ch in ("up", "p"): idx = (idx - 1) % len(options)
-        elif ch in ("down", "n"): idx = (idx + 1) % len(options)
+        if ch in ("up", "p", "w"): idx = (idx - 1) % len(options)
+        elif ch in ("down", "n", "s"): idx = (idx + 1) % len(options)
         elif ch in ("enter",):
             if idx == 0:  # INJECT
                 try:
@@ -534,7 +548,7 @@ def menu_inject():
                 wait_key()
             elif idx == 3:  # BACK
                 return
-        elif ch in ("q", "escape"): return
+        elif ch in ("q", "escape", "x"): return
 
 import os
 from injector import _discover_db_paths
