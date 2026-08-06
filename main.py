@@ -459,11 +459,11 @@ def menu_inject():
     if db:
         console.print(f"  [green]Found 9Router DB:[/green] {db}")
     else:
-        console.print("  [red]9Router DB not found![/red]")
-        console.print("  Expected locations:")
-        for p in NINE_ROUTER_DB_PATHS:
+        console.print("  [red]Provider DB not found![/red]")
+        console.print("  Searched locations:")
+        for p in _discover_db_paths():
             console.print(f"    {p}")
-        console.print("\n  Pass --db-path or install 9router first.")
+        console.print("\n  Set PROVIDER_DB_PATH env var or pass --db-path.")
         wait_key()
         return
 
@@ -533,12 +533,7 @@ def menu_inject():
         elif ch in ("q", "escape"): return
 
 import os
-NINE_ROUTER_DB_PATHS = [
-    Path.home() / ".9router" / "db" / "data.sqlite",
-    Path.home() / "9router" / "db" / "data.sqlite",
-    Path("D:/9router/db/data.sqlite"),
-    Path("D:/9router/data.sqlite"),
-]
+from injector import _discover_db_paths
 
 # ─── Status ────────────────────────────────────────────────────────────
 

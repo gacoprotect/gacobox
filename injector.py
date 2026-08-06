@@ -1,25 +1,33 @@
-"""9Router SQLite injector — masukkan harvested keys ke 9Router database."""
+"""SQLite injector — masukkan harvested keys ke local provider database."""
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any
 
-NINE_ROUTER_DB_PATHS = [
-    Path.home() / ".9router" / "db" / "data.sqlite",
-    Path.home() / "9router" / "db" / "data.sqlite",
-    Path("D:/9router/db/data.sqlite"),
-    Path("D:/9router/data.sqlite"),
-]
 
-PROVIDER = "blackbox"
-AUTH_TYPE = "apikey"  # 9Router uses "apikey" not "api_key"
-BASE_URL = "https://api.blackbox.ai/v1"
+def _discover_db_paths() -> list[Path]:
+    """Auto-discover database paths via env var or common locations."""
+    env_path = os.environ.get("PROVIDER_DB_PATH")
+    if env_path:
+        return [Path(env_path)]
+
+    home = Path.home()
+    return [
+        home / ".local" / "share" / "provider" / "db.sqlite",
+        home / ".config" / "provider" / "db.sqlite",
+        home / "provider" / "db.sqlite",
+    ]
+
+PROVIDER = os.environ.get("PROVIDER_NAME", "blackbox")
+AUTH_TYPE = os.environ.get("PROVIDER_AUTH_TYPE", "apikey")
+BASE_URL = os.environ.get("PROVIDER_BASE_URL", "https://api.blackbox.ai/v1")
 
 
 def find_9router_db() -> Path | None:
-    for p in NINE_ROUTER_DB_PATHS:
+    for p in _discover_db_paths():
         if p.exists():
             return p
     return None
@@ -28,7 +36,7 @@ def find_9router_db() -> Path | None:
 def inject_keys(keys_path: str = "output/keys.txt", db_path: str | None = None) -> int:
     db = Path(db_path) if db_path else find_9router_db()
     if db is None:
-        raise FileNotFoundError("9Router database not found. Pass --db-path or install 9router first.")
+        raise FileNotFoundError("Provider database not found. Set PROVIDER_DB_PATH or pass --db-path.")
 
     keys_file = Path(keys_path)
     if not keys_file.exists():
