@@ -325,9 +325,11 @@ class BlackboxClient:
                 # full poll budget. Falling through to the next round waits out
                 # another `verify_poll_timeout` instead, which is also the only
                 # thing that can still catch the original signup mail.
-                if not await self._click_resend(email):
+                reason = await self._click_resend(email)
+                if reason:
                     resend_refused += 1
-                    emit(f"!{resend_refused}x resend HTTP 500")
+                    prefix = f"{resend_refused}x " if resend_refused > 1 else ""
+                    emit(f"!{prefix}{reason}")
 
         await self._snapshot(email, "no_otp")
         domain = email.partition("@")[2]
@@ -360,8 +362,14 @@ class BlackboxClient:
             )
         raise last_exc if last_exc else BlackboxError("OTP wait failed")
 
-    async def _click_resend(self, email: str) -> bool:
+    async def _click_resend(self, email: str) -> str:
         """Click Resend and confirm the server actually accepted it.
+
+        Returns "" when the resend went through, otherwise a short reason fit
+        for the dashboard. A bool would have collapsed five distinct failures -
+        missing button, cooldown, no request, Playwright error, HTTP status -
+        into one, and the caller then had to guess: it reported every one of
+        them as "HTTP 500" because that is what the outage of the day returned.
 
         A click that raises nothing only proves Playwright found the element.
         The button can be disabled behind a cooldown, or the POST can come back
@@ -375,7 +383,7 @@ class BlackboxClient:
         try:
             if not await button.is_visible():
                 log.warning("[%s] resend button not visible, giving up", email)
-                return False
+                return "resend button missing"
             if not await button.is_enabled():
                 text = (await button.inner_text()).strip()
                 log.warning(
@@ -383,7 +391,7 @@ class BlackboxClient:
                     email,
                     text,
                 )
-                return False
+                return "rate limited (button disabled)"
 
             async with page.expect_response(
                 lambda r: r.request.method == "POST"
@@ -399,10 +407,10 @@ class BlackboxClient:
                 email,
             )
             await self._snapshot(email, "resend_no_request")
-            return False
+            return "resend sent no request"
         except PlaywrightError as exc:
             log.warning("[%s] resend click failed: %s", email, exc)
-            return False
+            return f"resend click failed: {type(exc).__name__}"
 
         body = ""
         try:
@@ -419,7 +427,7 @@ class BlackboxClient:
                 body,
             )
             await self._snapshot(email, f"resend_http{resp.status}")
-            return False
+            return f"resend HTTP {resp.status}"
 
         log.info(
             "[%s] resend accepted: HTTP %d %s body=%s",
@@ -429,7 +437,7 @@ class BlackboxClient:
             body,
         )
         await self._log_visible_alert(email)
-        return True
+        return ""
 
     async def _log_visible_alert(self, email: str) -> None:
         """Surface any on-page message the resend produced.

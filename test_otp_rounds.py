@@ -6,7 +6,7 @@ from config import Config
 from providers import blackbox
 
 
-def _drive(clicks, otp_on_poll=None, resend_ok=True):
+def _drive(clicks, otp_on_poll=None, resend_ok=True, resend_reason="resend HTTP 503"):
     cfg = Config()
     cfg.otp_resend_attempts = clicks
     cfg.tempmail_provider = "catchmail"
@@ -25,7 +25,7 @@ def _drive(clicks, otp_on_poll=None, resend_ok=True):
 
     async def fake_resend(email):
         events.append("CLICK_OK" if resend_ok else "CLICK_REJECTED")
-        return resend_ok
+        return "" if resend_ok else resend_reason
 
     async def fake_snapshot(email, tag):
         return None
@@ -80,6 +80,15 @@ def test_early_otp_stops_the_rounds():
     events = _drive(3, otp_on_poll=2)
     assert events.count("POLL") == 2, events
     assert events.count("CLICK_OK") == 1, events
+
+
+def test_the_real_failure_reason_reaches_the_dashboard():
+    # The Error column hardcoded "HTTP 500" because _click_resend returned a
+    # bool, so a 429 or a click that sent no request all read as a 500.
+    for reason in ("resend HTTP 429", "rate limited (button disabled)"):
+        events = _drive(2, resend_ok=False, resend_reason=reason)
+        setbacks = [e for e in events if e.startswith("!")]
+        assert setbacks == [f"!{reason}", f"!2x {reason}"], setbacks
 
 
 if __name__ == "__main__":
