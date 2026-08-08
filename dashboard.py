@@ -20,6 +20,7 @@ _STATUS_ICONS = {
     "creating_key": "[*]",
     "success": "[OK]",
     "failed": "[!!]",
+    "cooldown": "[z]",
 }
 
 
