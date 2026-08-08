@@ -37,7 +37,7 @@ from providers.blackbox import AccountResult, BlackboxClient
 from providers.tempmail import generate_email
 from providers.cf_domains import CLOUDFLARE_DOMAINS, get_random_domain
 from providers.proxy_manager import ProxyManager
-from logger import setup_logger, get_logger
+from logger import setup_logger, get_logger, set_worker
 
 STATE_FILE = "state.json"
 console = Console(width=60)
@@ -350,6 +350,7 @@ async def _drive(cfg, count, dashboard, state, proxy_manager):
     async def _account(email, password, jwt_token=""):
         async with sem:
             wid = await free_slots.get()
+            set_worker(wid)
             result = AccountResult(email=email, password=password)
             start = time.monotonic()
             client = None
@@ -388,10 +389,13 @@ async def _drive(cfg, count, dashboard, state, proxy_manager):
                     append_key(cfg.output_dir, record)
                 # Cool down while still holding the slot, otherwise the next
                 # account starts immediately and the pause buys us nothing.
-                cooldown = secrets.SystemRandom().uniform(*cfg.cooldown_range)
-                dashboard.update_worker(wid, status="cooldown")
-                get_logger().info("[%s] cooldown %.1fs", email, cooldown)
-                await asyncio.sleep(cooldown)
+                # Once every account has claimed a slot nobody is waiting on
+                # this one, so the sleep would only delay the run's end.
+                if launched < count:
+                    cooldown = secrets.SystemRandom().uniform(*cfg.cooldown_range)
+                    dashboard.update_worker(wid, status="cooldown")
+                    get_logger().info("[%s] cooldown %.1fs", email, cooldown)
+                    await asyncio.sleep(cooldown)
                 free_slots.put_nowait(wid)
 
     while launched < count:
