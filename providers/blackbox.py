@@ -8,6 +8,7 @@ cookies persist from signup through key creation.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -391,7 +392,7 @@ class BlackboxClient:
                     email,
                     text,
                 )
-                return "rate limited (button disabled)"
+                return f"button disabled: {text[:60]}" if text else "resend button disabled"
 
             async with page.expect_response(
                 lambda r: r.request.method == "POST"
@@ -427,7 +428,7 @@ class BlackboxClient:
                 body,
             )
             await self._snapshot(email, f"resend_http{resp.status}")
-            return f"resend HTTP {resp.status}"
+            return f"{resp.status}: {_server_message(body) or 'resend rejected'}"
 
         log.info(
             "[%s] resend accepted: HTTP %d %s body=%s",
@@ -612,3 +613,26 @@ async def _wait_any(
                 continue
         await asyncio.sleep(0.5)
     raise BlackboxError(f"Timed out waiting for {hint}")
+
+
+def _server_message(body: str) -> str:
+    """Pull the server's own wording out of a rejection body.
+
+    The dashboard should quote Blackbox, not our guess at what a status code
+    means: a 500 carrying "Failed to send verification code" and one carrying
+    a rate-limit notice are the same number but different problems. Falls back
+    to the raw body, and to "" when there is nothing to show.
+    """
+    body = (body or "").strip()
+    if not body:
+        return ""
+    try:
+        parsed = json.loads(body)
+    except ValueError:
+        return body[:60]
+    if isinstance(parsed, dict):
+        for key in ("error", "message", "detail"):
+            value = parsed.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()[:60]
+    return body[:60]

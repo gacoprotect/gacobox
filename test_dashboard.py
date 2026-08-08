@@ -63,13 +63,13 @@ def test_refused_resend_shows_in_the_error_column():
     w = d._workers[0]
 
     d.worker_stage(0, "waiting_verify")
-    d.worker_stage(0, "!1x resend HTTP 500")
-    assert w.error == "1x resend HTTP 500", w.error
+    d.worker_stage(0, "!1x 500: Failed to send verification code")
+    assert w.error == "1x 500: Failed to send verification code", w.error
     assert w.status == "waiting_verify", "a survived setback must not hijack Status"
-    assert "1x resend HTTP 500" in d._workers_table().columns[4]._cells[0]
+    assert "1x 500: Failed to send verification code" in d._workers_table().columns[4]._cells[0]
 
     d.worker_stage(0, "waiting_verify")
-    assert w.error == "1x resend HTTP 500", (
+    assert w.error == "1x 500: Failed to send verification code", (
         "the next round re-emits waiting_verify microseconds later, so clearing "
         "there would flash the message and hide it for the whole poll"
     )
@@ -77,9 +77,9 @@ def test_refused_resend_shows_in_the_error_column():
     d.worker_stage(0, "verifying_otp")
     assert w.error == "", "an OTP arriving is what proves the resend worked"
 
-    d.worker_stage(0, "!2x resend HTTP 500")
+    d.worker_stage(0, "!2x 500: Failed to send verification code")
     d.finish_worker(0, success=False, error="No OTP received within 60s")
-    d.worker_stage(0, "!3x resend HTTP 500")
+    d.worker_stage(0, "!3x 500: Failed to send verification code")
     assert w.error == "No OTP received within 60s", "a finished row keeps its cause"
 
 

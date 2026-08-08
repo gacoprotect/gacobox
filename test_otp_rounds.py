@@ -6,7 +6,7 @@ from config import Config
 from providers import blackbox
 
 
-def _drive(clicks, otp_on_poll=None, resend_ok=True, resend_reason="resend HTTP 503"):
+def _drive(clicks, otp_on_poll=None, resend_ok=True, resend_reason="503: Service Unavailable"):
     cfg = Config()
     cfg.otp_resend_attempts = clicks
     cfg.tempmail_provider = "catchmail"
@@ -85,10 +85,24 @@ def test_early_otp_stops_the_rounds():
 def test_the_real_failure_reason_reaches_the_dashboard():
     # The Error column hardcoded "HTTP 500" because _click_resend returned a
     # bool, so a 429 or a click that sent no request all read as a 500.
-    for reason in ("resend HTTP 429", "rate limited (button disabled)"):
+    for reason in ("429: Too many requests", "button disabled: Resend in 45s"):
         events = _drive(2, resend_ok=False, resend_reason=reason)
         setbacks = [e for e in events if e.startswith("!")]
         assert setbacks == [f"!{reason}", f"!2x {reason}"], setbacks
+
+
+def test_error_text_quotes_the_server_not_a_hardcoded_500():
+    from providers.blackbox import _server_message
+
+    # The dashboard used to read "resend HTTP 500" for every failure. The
+    # status is real, but the wording has to come from the response body:
+    # two 500s with different messages are different problems.
+    assert _server_message('{"error":"Failed to send verification code"}') == (
+        "Failed to send verification code"
+    )
+    assert _server_message('{"message":"Too many requests"}') == "Too many requests"
+    assert _server_message("Service Unavailable") == "Service Unavailable"
+    assert _server_message("") == ""
 
 
 if __name__ == "__main__":
