@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+from dataclasses import dataclass
+from typing import Callable
 
 from logger import get_logger
 
@@ -50,8 +52,27 @@ async def public_ip() -> str:
         return ""
 
 
-async def rotate(warp_cli: str = "warp-cli") -> bool:
-    """Rotate the WARP egress. Returns True only when the IP actually moved.
+@dataclass(frozen=True)
+class Rotation:
+    """Outcome of a rotation attempt.
+
+    `ip` is the egress as it stands afterwards, whether or not it moved, so the
+    caller can always show where traffic is going. `fatal` separates "the
+    tunnel is unusable" (warp-cli missing, connect failed) from "the egress
+    simply did not change", which is disappointing but still workable.
+    """
+
+    ip: str = ""
+    moved: bool = False
+    fatal: bool = False
+    detail: str = ""
+
+    def __bool__(self) -> bool:
+        return self.moved
+
+
+async def rotate(warp_cli: str = "warp-cli") -> Rotation:
+    """Rotate the WARP egress by re-registering.
 
     Only a fresh registration moves the egress; disconnect/connect measurably
     hands back the same IP, so it is not attempted.
@@ -59,7 +80,7 @@ async def rotate(warp_cli: str = "warp-cli") -> bool:
     log = get_logger()
     if not available(warp_cli):
         log.debug("warp-cli not in PATH, skipping rotation")
-        return False
+        return Rotation(fatal=True, detail="warp-cli not installed")
 
     async with _lock:
         before = await public_ip()
@@ -70,13 +91,15 @@ async def rotate(warp_cli: str = "warp-cli") -> bool:
         ok_new, out_new = await _run(warp_cli, "registration", "new")
         if not ok_new:
             log.warning("warp registration new failed: %s", out_new[:120])
+            # Reconnecting on the old registration keeps the run online even
+            # though the egress never moved.
             await _run(warp_cli, "connect")
-            return False
+            return Rotation(ip=await public_ip(), detail="registration failed")
 
         ok_conn, out_conn = await _run(warp_cli, "connect")
         if not ok_conn:
             log.warning("warp connect failed: %s", out_conn[:120])
-            return False
+            return Rotation(fatal=True, detail="connect failed")
         # Routes settle a moment after connect returns; checking immediately
         # still reports the previous egress.
         await asyncio.sleep(3)
@@ -84,9 +107,12 @@ async def rotate(warp_cli: str = "warp-cli") -> bool:
         after = await public_ip()
         if after and before and after != before:
             log.info("warp rotated: %s -> %s", before, after)
-            return True
-        log.warning("warp IP still %s after re-register", after or "unknown")
-        return False
+            return Rotation(ip=after, moved=True)
+        if not after:
+            log.warning("warp connected but the egress IP is unknown")
+            return Rotation(fatal=True, detail="no egress IP")
+        log.warning("warp IP still %s after re-register", after)
+        return Rotation(ip=after, detail="IP unchanged")
 
 
 class RotationBarrier:
@@ -103,9 +129,16 @@ class RotationBarrier:
     egress no signup will use only costs the run a WARP reconnect.
     """
 
-    def __init__(self, cycle: int, workers: int, warp_cli: str = "warp-cli") -> None:
+    def __init__(
+        self,
+        cycle: int,
+        workers: int,
+        warp_cli: str = "warp-cli",
+        on_rotate: "Callable[[Rotation], None] | None" = None,
+    ) -> None:
         self.every = max(1, cycle) * max(1, workers)
         self._warp_cli = warp_cli
+        self._on_rotate = on_rotate
         self._since_rotation = 0
         self._active = 0
         self._lock = asyncio.Lock()
@@ -136,6 +169,8 @@ class RotationBarrier:
 
         await self._drained.wait()
         try:
-            await rotate(self._warp_cli)
+            result = await rotate(self._warp_cli)
+            if self._on_rotate:
+                self._on_rotate(result)
         finally:
             self._open.set()

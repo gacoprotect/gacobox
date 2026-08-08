@@ -12,6 +12,8 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 from rich.text import Text
 
+from providers.warp import Rotation
+
 _STATUS_ICONS = {
     "idle": "[ ]",
     "registering": "[>]",
@@ -51,10 +53,15 @@ class WorkerState:
 class FarmDashboard:
     """Thread-safe-ish Rich Live dashboard. Updates are pushed from the async loop."""
 
-    def __init__(self, total: int, max_workers: int, provider: str = "", proxies: int = 0) -> None:
+    def __init__(self, total: int, max_workers: int, provider: str = "", proxies: int = 0, warp: str = "") -> None:
         self._total = total
         self._provider = provider
         self._proxies = proxies
+        self._warp = warp
+        self._warp_rotations = 0
+        self._warp_ip = ""
+        self._warp_note = "" if warp != "unavailable" else "warp-cli not installed"
+        self._warp_style = "cyan" if warp != "unavailable" else "bold red"
         self._success = 0
         self._failed = 0
         self._start: float = time.monotonic()
@@ -164,7 +171,33 @@ class FarmDashboard:
             text.append(f"Proxies: {self._proxies}  ", style="cyan")
         else:
             text.append("Proxies: none  ", style="yellow")
+        if self._warp:
+            label = self._warp
+            if self._warp_rotations:
+                label += f" x{self._warp_rotations}"
+            if self._warp_ip:
+                label += f" {self._warp_ip}"
+            if self._warp_note:
+                label += f" ({self._warp_note})"
+            text.append(f"WARP: {label}  ", style=self._warp_style)
         return text
+
+    def warp_rotated(self, result: "Rotation") -> None:
+        if result.ip:
+            self._warp_ip = result.ip
+        if result.fatal:
+            self._warp_style = "bold red"
+            self._warp_note = result.detail or "unavailable"
+        elif result.moved:
+            self._warp_rotations += 1
+            self._warp_style = "cyan"
+            self._warp_note = ""
+        else:
+            # The tunnel still works, the egress just did not change, so the
+            # run continues on an IP the site has already seen.
+            self._warp_style = "yellow"
+            self._warp_note = result.detail or "IP unchanged"
+        self._render()
 
     def _workers_table(self) -> Table:
         table = Table(title="Workers", expand=True, header_style="bold magenta")
