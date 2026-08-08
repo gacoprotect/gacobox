@@ -41,10 +41,24 @@ def export_keys_csv(output_dir: str, results: list[dict[str, Any]]) -> Path:
     return out
 
 
+def export_keys_9router(output_dir: str, results: list[dict[str, Any]]) -> Path:
+    """Write email|api_key lines for 9Router bulk import."""
+    out = Path(output_dir) / "keys_9router.txt"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        f"{r.get('email', '')}|{r.get('api_key', '')}"
+        for r in results
+        if r.get("api_key")
+    ]
+    out.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    return out
+
+
 def export_all(output_dir: str, results: list[dict[str, Any]]) -> dict[str, Path]:
     """Run every exporter and return {format: path}."""
     return {
         "txt": export_keys_txt(output_dir, results),
         "json": export_keys_json(output_dir, results),
         "csv": export_keys_csv(output_dir, results),
+        "9router": export_keys_9router(output_dir, results),
     }
