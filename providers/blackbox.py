@@ -271,6 +271,7 @@ class BlackboxClient:
         emit = stage or (lambda _: None)
         last_exc: Exception | None = None
         used = 0
+        resend_blocked = False
 
         for attempt in range(1, rounds + 1):
             used = attempt
@@ -290,12 +291,28 @@ class BlackboxClient:
                     "[%s] no otp on round %d/%d: %s", email, attempt, rounds, exc
                 )
                 await self._snapshot(email, f"no_otp_round{attempt}")
-                if attempt == rounds or not await self._click_resend(email):
+                if attempt == rounds:
+                    break
+                if not await self._resend_with_retry(email):
+                    resend_blocked = True
                     break
 
         await self._snapshot(email, "no_otp")
         domain = email.partition("@")[2]
-        if domain:
+        if resend_blocked:
+            # The mailbox never got a chance: the send endpoint refused us, and
+            # those 500s hit ten different domains in one run, including two
+            # that succeeded minutes later. Benching here would retire healthy
+            # domains for an outage on Blackbox's side.
+            log.error(
+                "[%s] giving up after %d/%d round(s): resend endpoint refused, "
+                "not benching %s",
+                email,
+                used,
+                rounds,
+                domain,
+            )
+        elif domain:
             secs = domain_cooldown.penalize(domain)
             log.error(
                 "[%s] no otp after %d/%d round(s) - benching %s for %.0f min",
@@ -377,6 +394,31 @@ class BlackboxClient:
         )
         await self._log_visible_alert(email)
         return True
+
+    async def _resend_with_retry(self, email: str, attempts: int = 3) -> bool:
+        """Retry a rejected resend before giving up on the address.
+
+        The 500s are not tied to a domain or to timing: one run had the same
+        domain accepted once and rejected once, and every request sat at the
+        same 126s mark. Roughly two thirds fail, so a single rejection says
+        nothing about the next attempt.
+        """
+        log = get_logger()
+        for attempt in range(1, attempts + 1):
+            if await self._click_resend(email):
+                return True
+            if attempt < attempts:
+                delay = 2.0 * attempt
+                log.info(
+                    "[%s] resend attempt %d/%d rejected, retrying in %.0fs",
+                    email,
+                    attempt,
+                    attempts,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+        log.error("[%s] resend failed %d times, giving up", email, attempts)
+        return False
 
     async def _log_visible_alert(self, email: str) -> None:
         """Surface any on-page message the resend produced.
@@ -475,10 +517,15 @@ class BlackboxClient:
         # response, then fall back to scanning the page text.
         api_key = ""
         try:
-            await asyncio.wait_for(self._key_created.wait(), timeout=15)
+            await asyncio.wait_for(self._key_created.wait(), timeout=60)
             api_key = self._api_key
         except asyncio.TimeoutError:
-            pass
+            # The button still read "CREATING…" when this timed out at 15s, so
+            # the POST was in flight rather than lost; the old budget was just
+            # short of what a slow server needs.
+            get_logger().warning(
+                "key POST did not return within 60s, reading the page instead"
+            )
 
         if not api_key:
             api_key = await self._read_key_from_page()
