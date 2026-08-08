@@ -1,0 +1,89 @@
+"""WARP egress rotation via warp-cli.
+
+Used as the no-proxy alternative: when the pool is off, accounts still need
+different egress IPs between signups. WARP is one system-wide tunnel, so a
+rotation moves the IP for every worker at once and the calls are serialised.
+That also means WARP cannot give concurrent workers distinct IPs - the proxy
+pool is the only thing that can.
+
+Best-effort throughout: a machine without warp-cli just gets no rotation.
+"""
+from __future__ import annotations
+
+import asyncio
+import shutil
+
+from logger import get_logger
+
+_lock = asyncio.Lock()
+
+
+def available(warp_cli: str = "warp-cli") -> bool:
+    return shutil.which(warp_cli) is not None
+
+
+async def _run(warp_cli: str, *args: str, timeout: float = 60) -> tuple[bool, str]:
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            warp_cli, *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+    except (FileNotFoundError, OSError) as exc:
+        return False, str(exc)
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        return False, f"{' '.join(args)} timed out after {timeout:.0f}s"
+    return proc.returncode == 0, (out or b"").decode(errors="replace").strip()
+
+
+async def public_ip() -> str:
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(trust_env=False, timeout=8) as client:
+            resp = await client.get("https://api.ipify.org")
+            return resp.text.strip() if resp.status_code == 200 else ""
+    except httpx.HTTPError:
+        return ""
+
+
+async def rotate(warp_cli: str = "warp-cli") -> bool:
+    """Rotate the WARP egress. Returns True only when the IP actually moved.
+
+    Only a fresh registration moves the egress; disconnect/connect measurably
+    hands back the same IP, so it is not attempted.
+    """
+    log = get_logger()
+    if not available(warp_cli):
+        log.debug("warp-cli not in PATH, skipping rotation")
+        return False
+
+    async with _lock:
+        before = await public_ip()
+        await _run(warp_cli, "disconnect")
+        ok_del, _ = await _run(warp_cli, "registration", "delete")
+        if not ok_del:
+            await _run(warp_cli, "registration", "clear")
+        ok_new, out_new = await _run(warp_cli, "registration", "new")
+        if not ok_new:
+            log.warning("warp registration new failed: %s", out_new[:120])
+            await _run(warp_cli, "connect")
+            return False
+
+        ok_conn, out_conn = await _run(warp_cli, "connect")
+        if not ok_conn:
+            log.warning("warp connect failed: %s", out_conn[:120])
+            return False
+        # Routes settle a moment after connect returns; checking immediately
+        # still reports the previous egress.
+        await asyncio.sleep(3)
+
+        after = await public_ip()
+        if after and before and after != before:
+            log.info("warp rotated: %s -> %s", before, after)
+            return True
+        log.warning("warp IP still %s after re-register", after or "unknown")
+        return False

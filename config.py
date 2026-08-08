@@ -15,6 +15,8 @@ class Config:
     cloudflare_api_url: str = os.getenv("CF_API_URL", "https://your-worker.workers.dev")
     cloudflare_default_domain: str = os.getenv("CF_DEFAULT_DOMAIN", "example.com")
     proxy_file: str = os.getenv("PROXY_FILE", "proxies.txt")
+    warp_cli: str = os.getenv("WARP_CLI", "warp-cli")
+    warp_rotate: bool = os.getenv("WARP_ROTATE", "0") not in ("0", "false", "")
     max_workers: int = 3
     verify_poll_timeout: int = 60
     verify_poll_interval: int = 5
