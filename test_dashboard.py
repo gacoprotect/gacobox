@@ -56,9 +56,31 @@ def test_worker_note_survives_a_finished_row():
     d.update_worker(0, status="registering", email="b@x.id", started_at=time.monotonic())
     assert d._workers[0].note == "", "a new account must clear the note"
 
+def test_refused_resend_shows_in_the_error_column():
+    # 15 refusals in one run left the TUI blank: only finish_worker wrote the
+    # Error column, and a refused resend does not finish the account.
+    d = FarmDashboard(total=1, max_workers=1)
+    w = d._workers[0]
+
+    d.worker_stage(0, "waiting_verify")
+    d.worker_stage(0, "!1x resend HTTP 500")
+    assert w.error == "1x resend HTTP 500", w.error
+    assert w.status == "waiting_verify", "a survived setback must not hijack Status"
+    assert "1x resend HTTP 500" in d._workers_table().columns[4]._cells[0]
+
+    d.worker_stage(0, "waiting_verify")
+    assert w.error == "", "reaching the next stage means the retry worked"
+
+    d.worker_stage(0, "!2x resend HTTP 500")
+    d.finish_worker(0, success=False, error="No OTP received within 60s")
+    d.worker_stage(0, "!3x resend HTTP 500")
+    assert w.error == "No OTP received within 60s", "a finished row keeps its cause"
+
+
 if __name__ == "__main__":
     test_slot_reuse_clears_previous_account()
     test_counters_advance_on_finish()
     test_elapsed_renders_once_started()
     test_worker_note_survives_a_finished_row()
+    test_refused_resend_shows_in_the_error_column()
     print("all dashboard tests passed")

@@ -130,6 +130,24 @@ class FarmDashboard:
         w.note = ""
         self._render()
 
+    def worker_stage(self, worker_id: int, stage: str) -> None:
+        """Route a stage string to either the Status or the Error column.
+
+        A stage prefixed with `!` is a setback the account survived - a refused
+        Resend, where polling continues - so it belongs in Error while Status
+        keeps showing what the worker is actually doing. Reaching the next real
+        stage means the retry worked, which clears Error: only a live problem
+        should be red.
+        """
+        if stage.startswith("!"):
+            w = self._workers.get(worker_id)
+            if w is None or w.done:
+                return
+            w.error = stage[1:]
+            self._render()
+            return
+        self.update_worker(worker_id, status=stage, error="")
+
     def worker_note(self, worker_id: int, note: str) -> None:
         """Show what a finished worker is waiting on, without clearing its result.
 

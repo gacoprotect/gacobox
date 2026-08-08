@@ -424,7 +424,7 @@ async def _drive(cfg, count, dashboard, state, proxy_manager):
                 email,
                 password,
                 jwt_token,
-                on_stage=lambda s: dashboard.update_worker(wid, status=s),
+                on_stage=lambda s: dashboard.worker_stage(wid, s),
             )
             result.api_key = api_key
             result.success = True

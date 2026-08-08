@@ -327,6 +327,7 @@ class BlackboxClient:
                 # thing that can still catch the original signup mail.
                 if not await self._click_resend(email):
                     resend_refused += 1
+                    emit(f"!{resend_refused}x resend HTTP 500")
 
         await self._snapshot(email, "no_otp")
         domain = email.partition("@")[2]
