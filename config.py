@@ -17,7 +17,7 @@ class Config:
     proxy_file: str = os.getenv("PROXY_FILE", "proxies.txt")
     max_workers: int = 3
     verify_poll_timeout: int = 60
-    verify_poll_interval: int = 3
+    verify_poll_interval: int = 5
     otp_resend_attempts: int = 3
     request_timeout: int = 120
     output_dir: str = "output"
