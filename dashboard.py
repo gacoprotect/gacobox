@@ -36,6 +36,7 @@ class WorkerState:
     error: str = ""
     started_at: float = 0.0
     done: bool = False
+    note: str = ""
 
     @property
     def icon(self) -> str:
@@ -126,6 +127,20 @@ class FarmDashboard:
             if hasattr(w, key):
                 setattr(w, key, value)
         w.done = False
+        w.note = ""
+        self._render()
+
+    def worker_note(self, worker_id: int, note: str) -> None:
+        """Show what a finished worker is waiting on, without clearing its result.
+
+        `update_worker` deliberately ignores finished rows so the run does not
+        end with every row reading "cooldown". Waiting on the WARP gate happens
+        after the result is in, so it needs a channel that leaves `done` alone.
+        """
+        w = self._workers.get(worker_id)
+        if w is None:
+            return
+        w.note = note
         self._render()
 
     def finish_worker(self, worker_id: int, *, success: bool, error: str = "") -> None:
@@ -213,9 +228,12 @@ class FarmDashboard:
         table.add_column("Elapsed", width=8, justify="right")
         table.add_column("Error", max_width=42, style="red")
         for w in self._workers.values():
+            status = f"{w.icon} {w.status}"
+            if w.note:
+                status = f"[z] {w.note}"
             table.add_row(
                 str(w.worker_id),
-                f"{w.icon} {w.status}",
+                status,
                 w.email or "-",
                 w.elapsed,
                 w.error[:42] if w.error else "",

@@ -373,7 +373,13 @@ async def _drive(cfg, count, dashboard, state, proxy_manager):
     launched = 0
     finished = 0
     barrier = (
-        warp.RotationBarrier(cfg.warp_cycle, cfg.max_workers, cfg.warp_cli, dashboard.warp_rotated)
+        warp.RotationBarrier(
+            cfg.warp_cycle,
+            cfg.max_workers,
+            cfg.warp_cli,
+            dashboard.warp_rotated,
+            dashboard.worker_note,
+        )
         if cfg.warp_rotate
         else None
     )
@@ -393,7 +399,7 @@ async def _drive(cfg, count, dashboard, state, proxy_manager):
             wid = await free_slots.get()
             set_worker(wid)
             if barrier:
-                await barrier.enter()
+                await barrier.enter(wid)
             result = AccountResult(email=email, password=password)
             start = time.monotonic()
             client = None
@@ -441,7 +447,7 @@ async def _drive(cfg, count, dashboard, state, proxy_manager):
                     await asyncio.sleep(cooldown)
                 finished += 1
                 if barrier:
-                    await barrier.account_done(remaining=count - finished)
+                    await barrier.account_done(remaining=count - finished, worker_id=wid)
                 free_slots.put_nowait(wid)
 
     while launched < count:

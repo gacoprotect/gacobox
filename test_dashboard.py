@@ -38,8 +38,27 @@ def test_elapsed_renders_once_started():
     assert d._workers[0].elapsed.endswith("s") and d._workers[0].elapsed != "-"
 
 
+def test_worker_note_survives_a_finished_row():
+    # update_worker ignores finished rows on purpose; the WARP gate reports
+    # after the result is in, so it must not be routed through it.
+    d = FarmDashboard(total=2, max_workers=1)
+    d.update_worker(0, status="registering", email="a@x.id", started_at=time.monotonic())
+    d.finish_worker(0, success=True)
+
+    d.update_worker(0, status="waiting for WARP")
+    assert d._workers[0].status == "success", "a finished row must keep its result"
+
+    d.worker_note(0, "waiting for WARP")
+    assert d._workers[0].note == "waiting for WARP"
+    assert d._workers[0].status == "success", "the note must not overwrite the result"
+    assert "waiting for WARP" in d._workers_table().columns[1]._cells[0]
+
+    d.update_worker(0, status="registering", email="b@x.id", started_at=time.monotonic())
+    assert d._workers[0].note == "", "a new account must clear the note"
+
 if __name__ == "__main__":
     test_slot_reuse_clears_previous_account()
     test_counters_advance_on_finish()
     test_elapsed_renders_once_started()
+    test_worker_note_survives_a_finished_row()
     print("all dashboard tests passed")

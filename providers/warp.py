@@ -135,10 +135,12 @@ class RotationBarrier:
         workers: int,
         warp_cli: str = "warp-cli",
         on_rotate: "Callable[[Rotation], None] | None" = None,
+        on_wait: "Callable[[int, str], None] | None" = None,
     ) -> None:
         self.every = max(1, cycle) * max(1, workers)
         self._warp_cli = warp_cli
         self._on_rotate = on_rotate
+        self._on_wait = on_wait
         self._since_rotation = 0
         self._active = 0
         self._lock = asyncio.Lock()
@@ -147,16 +149,22 @@ class RotationBarrier:
         self._drained = asyncio.Event()
         self._drained.set()
 
-    async def enter(self) -> None:
+    async def enter(self, worker_id: int = -1) -> None:
+        waited = False
         while True:
+            if not self._open.is_set() and self._on_wait and not waited:
+                waited = True
+                self._on_wait(worker_id, "waiting for WARP")
             await self._open.wait()
             async with self._lock:
                 if self._open.is_set():
                     self._active += 1
                     self._drained.clear()
+                    if waited and self._on_wait:
+                        self._on_wait(worker_id, "")
                     return
 
-    async def account_done(self, remaining: int) -> None:
+    async def account_done(self, remaining: int, worker_id: int = -1) -> None:
         async with self._lock:
             self._active -= 1
             if self._active == 0:
@@ -167,10 +175,16 @@ class RotationBarrier:
             self._since_rotation = 0
             self._open.clear()
 
+        if self._on_wait:
+            self._on_wait(worker_id, "draining for WARP")
         await self._drained.wait()
         try:
+            if self._on_wait:
+                self._on_wait(worker_id, "rotating WARP")
             result = await rotate(self._warp_cli)
             if self._on_rotate:
                 self._on_rotate(result)
         finally:
             self._open.set()
+            if self._on_wait:
+                self._on_wait(worker_id, "")
