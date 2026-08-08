@@ -193,6 +193,7 @@ def menu_register():
     cf_api = Config().cloudflare_api_url
     use_proxy = False
     warp_rotate = Config().warp_rotate and warp.available()
+    warp_cycle = Config().warp_cycle
     state = load_state("output")
     done = len(done_emails(state))
 
@@ -226,10 +227,9 @@ def menu_register():
             warp_label = "[dim]n/a (proxy pool active)[/dim]"
         elif not warp.available():
             warp_label = "[red]warp-cli missing[/red]"
-        elif warp_rotate and workers > 1:
-            warp_label = f"[red]ON but needs workers=1 (current: {workers})[/red]"
         elif warp_rotate:
-            warp_label = "[green]ON - rotate per account[/green]"
+            every = max(1, warp_cycle) * max(1, workers)
+            warp_label = f"[green]ON - rotate every {every} accounts[/green]"
         else:
             warp_label = "[yellow]OFF (static egress)[/yellow]"
         settings.add_row("WARP:", warp_label)
@@ -254,10 +254,12 @@ def menu_register():
         if use_proxy:
             warp_desc = "[dim]not used while proxies are ON[/dim]"
         elif warp.available():
-            warp_desc = f"Rotate IP per account (current: {'ON' if warp_rotate else 'OFF'})"
+            warp_desc = f"Rotate egress IP (current: {'ON' if warp_rotate else 'OFF'})"
         else:
             warp_desc = "[red]warp-cli not found in PATH[/red]"
         actions.add_row("9", "TOGGLE WARP", warp_desc)
+        if warp_rotate and not use_proxy and warp.available():
+            actions.add_row("c", "WARP CYCLE", f"Accounts per worker between rotations (current: {warp_cycle})")
         actions.add_row("0", "BACK", "Return to main menu")
         console.print(Panel(actions, title="ACTIONS", border_style="green"))
 
@@ -267,10 +269,10 @@ def menu_register():
             return
 
         if raw == "1":
-            _do_register(count, workers, headless, provider, domain, cf_api, use_proxy, warp_rotate, resume=False)
+            _do_register(count, workers, headless, provider, domain, cf_api, use_proxy, warp_rotate, warp_cycle, resume=False)
             return
         elif raw == "2" and done > 0:
-            _do_register(count, workers, headless, provider, domain, cf_api, use_proxy, warp_rotate, resume=True)
+            _do_register(count, workers, headless, provider, domain, cf_api, use_proxy, warp_rotate, warp_cycle, resume=True)
             return
         elif raw == "3":
             val = input(f"  Count [{count}]: ").strip()
@@ -297,17 +299,14 @@ def menu_register():
             use_proxy = not use_proxy
         elif raw == "9":
             warp_rotate = not warp_rotate
+        elif raw == "c":
+            val = input(f"  Accounts per worker between rotations [{warp_cycle}]: ").strip()
+            if val.isdigit(): warp_cycle = max(1, int(val))
         elif raw in ("0", "q", "x", "b"):
             return
 
-def _do_register(count, workers, headless, provider, domain, cf_api, use_proxy=False, warp_rotate=False, resume=False):
-    # WARP is one system-wide tunnel: a rotation moves the egress for every
-    # worker at once, cutting sessions that are mid-signup. Rotating is only
-    # safe while a single account is in flight.
+def _do_register(count, workers, headless, provider, domain, cf_api, use_proxy=False, warp_rotate=False, warp_cycle=2, resume=False):
     warp_rotate = warp_rotate and not use_proxy
-    if warp_rotate and workers > 1:
-        console.print(f"  [yellow]WARP rotation needs workers=1, got {workers}. Forcing 1 worker.[/yellow]")
-        workers = 1
     cfg = Config(
         max_workers=workers,
         headless=headless,
@@ -315,6 +314,7 @@ def _do_register(count, workers, headless, provider, domain, cf_api, use_proxy=F
         tempmail_domain=domain,
         cloudflare_api_url=cf_api,
         warp_rotate=warp_rotate,
+        warp_cycle=warp_cycle,
     )
     setup_logger(cfg.output_dir)
     state = load_state(cfg.output_dir)
@@ -369,6 +369,8 @@ def _do_register(count, workers, headless, provider, domain, cf_api, use_proxy=F
 async def _drive(cfg, count, dashboard, state, proxy_manager):
     sem = asyncio.Semaphore(cfg.max_workers)
     launched = 0
+    finished = 0
+    barrier = warp.RotationBarrier(cfg.warp_cycle, cfg.max_workers, cfg.warp_cli) if cfg.warp_rotate else None
     tasks = []
     skip = done_emails(state)
     # wid must be claimed after the semaphore admits the task: assigning it at
@@ -378,17 +380,17 @@ async def _drive(cfg, count, dashboard, state, proxy_manager):
         free_slots.put_nowait(slot)
 
     async def _account(email, password, jwt_token=""):
+        nonlocal finished
         async with sem:
             wid = await free_slots.get()
             set_worker(wid)
+            if barrier:
+                await barrier.enter()
             result = AccountResult(email=email, password=password)
             start = time.monotonic()
             client = None
             proxy = proxy_manager.get_random_proxy() if proxy_manager and proxy_manager.has_proxies() else None
             try:
-                if cfg.warp_rotate and not proxy:
-                    dashboard.update_worker(wid, status="rotating IP", email=email, error="", started_at=start)
-                    await warp.rotate(cfg.warp_cli)
                 dashboard.update_worker(
                     wid, status="registering", email=email, error="", started_at=start
                 )
@@ -429,6 +431,9 @@ async def _drive(cfg, count, dashboard, state, proxy_manager):
                     dashboard.update_worker(wid, status="cooldown")
                     get_logger().info("[%s] cooldown %.1fs", email, cooldown)
                     await asyncio.sleep(cooldown)
+                finished += 1
+                if barrier:
+                    await barrier.account_done(remaining=count - finished)
                 free_slots.put_nowait(wid)
 
     while launched < count:

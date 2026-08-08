@@ -17,6 +17,7 @@ class Config:
     proxy_file: str = os.getenv("PROXY_FILE", "proxies.txt")
     warp_cli: str = os.getenv("WARP_CLI", "warp-cli")
     warp_rotate: bool = os.getenv("WARP_ROTATE", "0") not in ("0", "false", "")
+    warp_cycle: int = int(os.getenv("WARP_CYCLE", "2"))
     max_workers: int = 3
     verify_poll_timeout: int = 60
     verify_poll_interval: int = 5

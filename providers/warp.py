@@ -87,3 +87,55 @@ async def rotate(warp_cli: str = "warp-cli") -> bool:
             return True
         log.warning("warp IP still %s after re-register", after or "unknown")
         return False
+
+
+class RotationBarrier:
+    """Rotates the WARP egress once every `cycle` accounts per worker.
+
+    WARP moves the egress for every worker at once, so a rotation may only run
+    while no signup is in flight. Rotation is counted against the run as a
+    whole - `cycle=2` with 3 workers rotates every 6th finished account - and
+    the worker that trips the count closes the gate, waits for the others to
+    finish what they already started, rotates, then reopens it.
+
+    Workers announce themselves with `enter()` before each account and
+    `account_done()` after. Nothing rotates once `remaining` hits zero: a fresh
+    egress no signup will use only costs the run a WARP reconnect.
+    """
+
+    def __init__(self, cycle: int, workers: int, warp_cli: str = "warp-cli") -> None:
+        self.every = max(1, cycle) * max(1, workers)
+        self._warp_cli = warp_cli
+        self._since_rotation = 0
+        self._active = 0
+        self._lock = asyncio.Lock()
+        self._open = asyncio.Event()
+        self._open.set()
+        self._drained = asyncio.Event()
+        self._drained.set()
+
+    async def enter(self) -> None:
+        while True:
+            await self._open.wait()
+            async with self._lock:
+                if self._open.is_set():
+                    self._active += 1
+                    self._drained.clear()
+                    return
+
+    async def account_done(self, remaining: int) -> None:
+        async with self._lock:
+            self._active -= 1
+            if self._active == 0:
+                self._drained.set()
+            self._since_rotation += 1
+            if self._since_rotation < self.every or remaining <= 0:
+                return
+            self._since_rotation = 0
+            self._open.clear()
+
+        await self._drained.wait()
+        try:
+            await rotate(self._warp_cli)
+        finally:
+            self._open.set()
