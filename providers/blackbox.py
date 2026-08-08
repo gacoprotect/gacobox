@@ -27,6 +27,7 @@ from config import Config
 from logger import get_logger
 from providers import tempmail
 from providers import cloudflare_tempmail
+from providers import domain_cooldown
 
 
 class BlackboxError(Exception):
@@ -190,7 +191,7 @@ class BlackboxClient:
         log.info("[%s] signup submitted, url=%s", email, page.url)
 
         stage("waiting_verify")
-        code = await self._await_otp_with_resend(email, jwt_token)
+        code = await self._await_otp_with_resend(email, jwt_token, stage)
         log.info("[%s] otp received=%s", email, code)
 
         stage("verifying_otp")
@@ -253,7 +254,12 @@ class BlackboxClient:
     # Step 2 — OTP verification
     # ------------------------------------------------------------------
 
-    async def _await_otp_with_resend(self, email: str, jwt_token: str) -> str:
+    async def _await_otp_with_resend(
+        self,
+        email: str,
+        jwt_token: str,
+        stage: Callable[[str], None] | None = None,
+    ) -> str:
         """Poll the mailbox in rounds, clicking Resend between empty rounds.
 
         Blackbox drops a fair number of first-attempt mails, so a single long
@@ -262,9 +268,13 @@ class BlackboxClient:
         """
         rounds = max(1, self._cfg.otp_resend_attempts)
         log = get_logger()
+        emit = stage or (lambda _: None)
         last_exc: Exception | None = None
+        used = 0
 
         for attempt in range(1, rounds + 1):
+            used = attempt
+            emit("waiting_verify" if attempt == 1 else f"resend {attempt}/{rounds}")
             try:
                 if self._cfg.tempmail_provider == "cloudflare":
                     return await cloudflare_tempmail.wait_for_otp(
@@ -284,22 +294,116 @@ class BlackboxClient:
                     break
 
         await self._snapshot(email, "no_otp")
+        domain = email.partition("@")[2]
+        if domain:
+            secs = domain_cooldown.penalize(domain)
+            log.error(
+                "[%s] no otp after %d/%d round(s) - benching %s for %.0f min",
+                email,
+                used,
+                rounds,
+                domain,
+                secs / 60,
+            )
         raise last_exc if last_exc else BlackboxError("OTP wait failed")
 
     async def _click_resend(self, email: str) -> bool:
-        """Click the Resend button on the OTP form. False if it isn't there."""
+        """Click Resend and confirm the server actually accepted it.
+
+        A click that raises nothing only proves Playwright found the element.
+        The button can be disabled behind a cooldown, or the POST can come back
+        429/4xx, and either way the old code reported success and then waited
+        another full round for a mail that was never sent. So we wait for the
+        response the click triggers and judge on its status.
+        """
         log = get_logger()
-        button = self.page.locator('button:has-text("Resend")').first
+        page = self.page
+        button = page.locator('button:has-text("Resend")').first
         try:
             if not await button.is_visible():
                 log.warning("[%s] resend button not visible, giving up", email)
                 return False
-            await button.click()
-            log.info("[%s] clicked resend, waiting for a fresh code", email)
-            return True
+            if not await button.is_enabled():
+                text = (await button.inner_text()).strip()
+                log.warning(
+                    "[%s] resend button disabled (label=%r), server is rate limiting",
+                    email,
+                    text,
+                )
+                return False
+
+            async with page.expect_response(
+                lambda r: r.request.method == "POST"
+                and r.url.startswith(self._cfg.blackbox_url),
+                timeout=15_000,
+            ) as caught:
+                await button.click()
+            resp = await caught.value
+        except PlaywrightTimeoutError:
+            # Click landed but nothing left the page: no request means no mail.
+            log.error(
+                "[%s] resend click produced no POST within 15s - treating as failed",
+                email,
+            )
+            await self._snapshot(email, "resend_no_request")
+            return False
         except PlaywrightError as exc:
             log.warning("[%s] resend click failed: %s", email, exc)
             return False
+
+        body = ""
+        try:
+            body = (await resp.text())[:300]
+        except PlaywrightError:
+            pass
+
+        if resp.status >= 400:
+            log.error(
+                "[%s] resend rejected: HTTP %d %s body=%s",
+                email,
+                resp.status,
+                resp.url[:120],
+                body,
+            )
+            await self._snapshot(email, f"resend_http{resp.status}")
+            return False
+
+        log.info(
+            "[%s] resend accepted: HTTP %d %s body=%s",
+            email,
+            resp.status,
+            resp.url[:120],
+            body,
+        )
+        await self._log_visible_alert(email)
+        return True
+
+    async def _log_visible_alert(self, email: str) -> None:
+        """Surface any on-page message the resend produced.
+
+        Blackbox reports 'too many requests' as ordinary text, not an HTTP
+        error, so a 200 alone does not mean a mail went out.
+        """
+        log = get_logger()
+        try:
+            text = await self.page.evaluate(
+                """() => {
+                    const hits = [];
+                    const nodes = document.querySelectorAll(
+                        '[role=alert], [class*=toast], [class*=error], [class*=alert]'
+                    );
+                    for (const n of nodes) {
+                        const t = (n.innerText || '').trim();
+                        if (t) hits.push(t);
+                    }
+                    return hits.join(' | ');
+                }"""
+            )
+        except PlaywrightError as exc:
+            log.debug("[%s] could not read page alerts: %s", email, exc)
+            return
+        if text:
+            log.warning("[%s] page message after resend: %s", email, text[:300])
 
     async def verify_otp(self, code: str, email: str = "") -> None:
         page = self.page

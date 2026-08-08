@@ -37,6 +37,8 @@ class WorkerState:
 
     @property
     def icon(self) -> str:
+        if self.status.startswith("resend"):
+            return "[@]"
         return _STATUS_ICONS.get(self.status, "❓")
 
     @property
