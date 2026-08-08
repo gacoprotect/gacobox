@@ -102,6 +102,12 @@ class FarmDashboard:
         w = self._workers.get(worker_id)
         if w is None:
             return
+        # A finished worker keeps its result until a new account claims the
+        # slot, which only a new email signals. Without this the post-result
+        # cooldown overwrote the success/failed status and cleared `done`, so
+        # a completed run ended with every row reading "cooldown".
+        if w.done and "email" not in changes:
+            return
         for key, value in changes.items():
             if hasattr(w, key):
                 setattr(w, key, value)
