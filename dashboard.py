@@ -135,9 +135,13 @@ class FarmDashboard:
 
         A stage prefixed with `!` is a setback the account survived - a refused
         Resend, where polling continues - so it belongs in Error while Status
-        keeps showing what the worker is actually doing. Reaching the next real
-        stage means the retry worked, which clears Error: only a live problem
-        should be red.
+        keeps showing what the worker is actually doing.
+
+        `waiting_verify` deliberately does not clear Error. Every retry round
+        re-emits it microseconds after the setback, so clearing there made the
+        message flash and vanish instead of staying visible for the poll. Only
+        an OTP actually arriving proves the resend worked, and that arrives as
+        `verifying_otp`.
         """
         if stage.startswith("!"):
             w = self._workers.get(worker_id)
@@ -145,6 +149,9 @@ class FarmDashboard:
                 return
             w.error = stage[1:]
             self._render()
+            return
+        if stage == "waiting_verify":
+            self.update_worker(worker_id, status=stage)
             return
         self.update_worker(worker_id, status=stage, error="")
 

@@ -69,7 +69,13 @@ def test_refused_resend_shows_in_the_error_column():
     assert "1x resend HTTP 500" in d._workers_table().columns[4]._cells[0]
 
     d.worker_stage(0, "waiting_verify")
-    assert w.error == "", "reaching the next stage means the retry worked"
+    assert w.error == "1x resend HTTP 500", (
+        "the next round re-emits waiting_verify microseconds later, so clearing "
+        "there would flash the message and hide it for the whole poll"
+    )
+
+    d.worker_stage(0, "verifying_otp")
+    assert w.error == "", "an OTP arriving is what proves the resend worked"
 
     d.worker_stage(0, "!2x resend HTTP 500")
     d.finish_worker(0, success=False, error="No OTP received within 60s")

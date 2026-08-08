@@ -21,7 +21,7 @@ class Config:
     max_workers: int = int(os.getenv("WORKERS", "5"))
     count: int = int(os.getenv("COUNT", "20"))
     use_proxy: bool = os.getenv("USE_PROXY", "0") not in ("0", "false", "")
-    verify_poll_timeout: int = int(os.getenv("VERIFY_POLL_TIMEOUT", "60"))
+    verify_poll_timeout: int = int(os.getenv("VERIFY_POLL_TIMEOUT", "20"))
     verify_poll_interval: int = int(os.getenv("VERIFY_POLL_INTERVAL", "5"))
     otp_resend_attempts: int = int(os.getenv("OTP_RESEND_ATTEMPTS", "3"))
     request_timeout: int = int(os.getenv("REQUEST_TIMEOUT", "120"))
@@ -33,8 +33,8 @@ class Config:
     random_delay_max: float = float(os.getenv("DELAY_MAX", "10.0"))
     cooldown_min: float = float(os.getenv("COOLDOWN_MIN", "10.0"))
     cooldown_max: float = float(os.getenv("COOLDOWN_MAX", "20.0"))
-    warp_stagger_min: float = float(os.getenv("WARP_STAGGER_MIN", "1.0"))
-    warp_stagger_max: float = float(os.getenv("WARP_STAGGER_MAX", "5.0"))
+    warp_stagger_min: float = float(os.getenv("WARP_STAGGER_MIN", "3.0"))
+    warp_stagger_max: float = float(os.getenv("WARP_STAGGER_MAX", "7.0"))
     key_name: str = "gaco-dev"
 
     @property
