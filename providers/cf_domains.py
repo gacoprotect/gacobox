@@ -33,4 +33,8 @@ def get_random_domain() -> str:
     usable = [d for d in CLOUDFLARE_DOMAINS if not domain_cooldown.is_cooling(d)]
     # Every domain benched at once means the fault is upstream, not per-domain;
     # falling back to the full list beats refusing to run.
-    return secrets.choice(usable or CLOUDFLARE_DOMAINS)
+    if not usable:
+        return secrets.choice(CLOUDFLARE_DOMAINS)
+    chosen = secrets.choice(usable)
+    domain_cooldown.record_use(chosen)
+    return chosen
