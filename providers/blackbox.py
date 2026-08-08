@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import dataclass, field
+from typing import Callable
+from urllib.parse import unquote, urlparse
 
 from playwright.async_api import (
     Browser,
@@ -20,7 +22,9 @@ from playwright.async_api import (
 )
 
 from config import Config
+from logger import get_logger
 from providers import tempmail
+from providers import cloudflare_tempmail
 
 
 class BlackboxError(Exception):
@@ -47,8 +51,9 @@ _SIGNUP_FIELDS = ("1_email", "1_password", "0")
 class BlackboxClient:
     """Owns one Playwright browser/context/page for the whole account flow."""
 
-    def __init__(self, cfg: Config) -> None:
+    def __init__(self, cfg: Config, proxy: str | None = None) -> None:
         self._cfg = cfg
+        self._proxy = proxy
         self._playwright = None
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
@@ -62,11 +67,48 @@ class BlackboxClient:
 
     async def start(self) -> None:
         self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(
-            headless=self._cfg.headless,
-        )
+        
+        launch_options = {"headless": self._cfg.headless}
+        if self._proxy:
+            # Chromium ignores user:pass inside the proxy URL and stalls on the
+            # auth prompt, so credentials must be passed as separate fields.
+            parsed = urlparse(self._proxy)
+            server = f"{parsed.scheme}://{parsed.hostname}"
+            if parsed.port:
+                server += f":{parsed.port}"
+            proxy_opts: dict[str, str] = {"server": server}
+            if parsed.username:
+                proxy_opts["username"] = unquote(parsed.username)
+            if parsed.password:
+                proxy_opts["password"] = unquote(parsed.password)
+            launch_options["proxy"] = proxy_opts
+        
+        self._browser = await self._playwright.chromium.launch(**launch_options)
         self._context = await self._browser.new_context()
         self._page = await self._context.new_page()
+
+        log = get_logger()
+        # A proxy credential prompt surfaces as a native dialog, which would
+        # otherwise block silently until the OTP wait times out.
+        self._page.on(
+            "dialog",
+            lambda d: log.warning("DIALOG %s: %s", d.type, d.message),
+        )
+        self._page.on(
+            "requestfailed",
+            lambda r: self._log_request_failure(r),
+        )
+
+    def _log_request_failure(self, request) -> None:
+        # Third-party trackers and cancelled Next.js prefetches fail constantly
+        # and would bury real errors; only same-origin document loads matter.
+        log = get_logger()
+        failure = request.failure or ""
+        own_origin = request.url.startswith(self._cfg.blackbox_url)
+        if own_origin and "_rsc=" not in request.url and "ERR_ABORTED" not in failure:
+            log.warning("REQ FAILED %s %s", failure, request.url[:120])
+        else:
+            log.debug("req failed (ignorable) %s %s", failure, request.url[:120])
 
     async def stop(self) -> None:
         try:
@@ -89,7 +131,13 @@ class BlackboxClient:
     # Full flow
     # ------------------------------------------------------------------
 
-    async def register_and_create_key(self, email: str, password: str) -> str:
+    async def register_and_create_key(
+        self,
+        email: str,
+        password: str,
+        jwt_token: str = "",
+        on_stage: Callable[[str], None] | None = None,
+    ) -> str:
         """Run the entire verified flow and return the sk-... API key.
 
         Steps:
@@ -102,10 +150,33 @@ class BlackboxClient:
         page = self.page
         page.set_default_timeout(self._cfg.request_timeout * 1000)
 
+        log = get_logger()
+        log.info("[%s] flow start proxy=%s", email, self._proxy or "direct")
+        stage = on_stage or (lambda _: None)
+
+        stage("registering")
         await self.signup(email, password)
-        code = await tempmail.wait_for_otp(email, self._cfg)
+        log.info("[%s] signup submitted, url=%s", email, page.url)
+
+        stage("waiting_verify")
+        if self._cfg.tempmail_provider == "cloudflare":
+            code = await cloudflare_tempmail.wait_for_otp(
+                self._cfg.cloudflare_api_url,
+                jwt_token,
+                email,
+                self._cfg
+            )
+        else:
+            code = await tempmail.wait_for_otp(email, self._cfg)
+        log.info("[%s] otp received=%s", email, code)
+
+        stage("verifying_otp")
         await self.verify_otp(code)
+        log.info("[%s] otp verified, url=%s", email, page.url)
+
+        stage("creating_key")
         api_key = await self.create_api_key()
+        log.info("[%s] key created len=%d", email, len(api_key))
         return api_key
 
     # ------------------------------------------------------------------
@@ -114,10 +185,23 @@ class BlackboxClient:
 
     async def signup(self, email: str, password: str) -> None:
         page = self.page
-        await page.goto(f"{self._cfg.blackbox_url}/signup", wait_until="domcontentloaded")
+        log = get_logger()
 
+        # Through a rotating proxy the HTML shell sometimes arrives without the
+        # Next.js bundle executing, leaving a titled but empty page with no form.
         email_input = page.locator('input[type="email"], input[name="email"]').first
-        await email_input.wait_for(state="visible", timeout=30_000)
+        for attempt in range(1, 4):
+            await page.goto(f"{self._cfg.blackbox_url}/signup", wait_until="domcontentloaded")
+            try:
+                await email_input.wait_for(state="visible", timeout=20_000)
+                break
+            except PlaywrightTimeoutError:
+                log.warning(
+                    "[%s] signup form not rendered (attempt %d/3), reloading", email, attempt
+                )
+                if attempt == 3:
+                    raise BlackboxError("Signup form never rendered after 3 attempts")
+
         await email_input.fill(email)
 
         pass_input = page.locator('input[type="password"], input[name="password"]').first
