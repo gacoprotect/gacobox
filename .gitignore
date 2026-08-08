@@ -7,18 +7,12 @@ __pycache__/
 dist/
 build/
 *.egg
+.venv/
+venv/
 
 # Output (contains API keys — never commit)
-output/keys.txt
-output/keys.json
-output/keys.csv
-output/state.json
-output/model_test.json
-output/model_results.json
-output/captured_requests.json
-output/pipeline_result.json
-output/keys_page.png
-output/*.png
+output/
+proxies.txt
 
 # Playwright
 test-results/
@@ -29,6 +23,15 @@ playwright-report/
 .idea/
 *.swp
 *.swo
+
+# Agent/tooling artifacts
+.omo/
+.codegraph
+.codegraph/
+graphify-out/
+.claude/
+.aider*
+.cache/
 
 # OS
 .DS_Store
@@ -42,3 +45,4 @@ desktop.ini
 
 # Logs
 *.log
+domains.txt
