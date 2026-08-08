@@ -35,10 +35,11 @@ class BlackboxError(Exception):
 
 
 def _mask_proxy(proxy: str | None) -> str:
-    """Render a proxy URL for logs with the user:pass part hidden.
+    """Render a proxy URL for logs with only the password hidden.
 
-    Only the userinfo is masked; scheme, host and port stay readable because
-    they are what you need when a run stalls on one endpoint.
+    The username stays: a rotating pool shares one host:port, so it is the
+    only thing that identifies which proxy stalled. Masking it too made every
+    endpoint look alike in the log.
     """
     if not proxy:
         return "direct"
@@ -48,7 +49,8 @@ def _mask_proxy(proxy: str | None) -> str:
     host = parsed.hostname or ""
     if parsed.port:
         host += f":{parsed.port}"
-    return f"{parsed.scheme}://***@{host}"
+    auth = parsed.username if parsed.password is None else f"{parsed.username}:***"
+    return f"{parsed.scheme}://{auth}@{host}"
 
 
 @dataclass(slots=True)
