@@ -374,7 +374,6 @@ async def _drive(cfg, count, dashboard, state, proxy_manager):
                 get_logger().error("[%s] failed: %s", email, result.error)
                 dashboard.finish_worker(wid, success=False, error=result.error)
             finally:
-                free_slots.put_nowait(wid)
                 if client:
                     try: await client.stop()
                     except: pass
@@ -387,6 +386,13 @@ async def _drive(cfg, count, dashboard, state, proxy_manager):
                 save_state(cfg.output_dir, state)
                 if result.api_key:
                     append_key(cfg.output_dir, record)
+                # Cool down while still holding the slot, otherwise the next
+                # account starts immediately and the pause buys us nothing.
+                cooldown = secrets.SystemRandom().uniform(*cfg.cooldown_range)
+                dashboard.update_worker(wid, status="cooldown")
+                get_logger().info("[%s] cooldown %.1fs", email, cooldown)
+                await asyncio.sleep(cooldown)
+                free_slots.put_nowait(wid)
 
     while launched < count:
         if cfg.tempmail_provider == "cloudflare":

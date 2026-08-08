@@ -1,6 +1,8 @@
 """Cloudflare Workers temporary mailbox client.
 
-Uses custom Cloudflare Workers temp email API.
+Every request here passes trust_env=False: the browser proxies are for looking
+like different users to Blackbox, and routing our own mailbox through a rotating
+exit node only adds latency and failure modes to the OTP poll.
 """
 from __future__ import annotations
 
@@ -24,7 +26,7 @@ async def create_address(api_url: str, domain: str, *, timeout: int = 30) -> tup
     
     Returns (email_address, jwt_token).
     """
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
         payload = {
             "name": "",
             "cf_token": "",
@@ -71,7 +73,7 @@ async def fetch_messages(
     
     Returns list of messages or [] on failure.
     """
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
         resp = await client.get(
             f"{api_url}/api/parsed_mails",
             params={"limit": 20, "offset": 0},
@@ -105,7 +107,7 @@ async def read_message(
     timeout: int = 30
 ) -> dict[str, Any]:
     """Fetch a single message body."""
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
         resp = await client.get(
             f"{api_url}/api/parsed_mail/{message_id}",
             headers={

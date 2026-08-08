@@ -17,6 +17,7 @@ from urllib.parse import unquote, urlparse
 from playwright.async_api import (
     Browser,
     BrowserContext,
+    Error as PlaywrightError,
     Page,
     TimeoutError as PlaywrightTimeoutError,
     async_playwright,
@@ -189,19 +190,7 @@ class BlackboxClient:
         log.info("[%s] signup submitted, url=%s", email, page.url)
 
         stage("waiting_verify")
-        try:
-            if self._cfg.tempmail_provider == "cloudflare":
-                code = await cloudflare_tempmail.wait_for_otp(
-                    self._cfg.cloudflare_api_url,
-                    jwt_token,
-                    email,
-                    self._cfg
-                )
-            else:
-                code = await tempmail.wait_for_otp(email, self._cfg)
-        except Exception:
-            await self._snapshot(email, "no_otp")
-            raise
+        code = await self._await_otp_with_resend(email, jwt_token)
         log.info("[%s] otp received=%s", email, code)
 
         stage("verifying_otp")
@@ -263,6 +252,54 @@ class BlackboxClient:
     # ------------------------------------------------------------------
     # Step 2 — OTP verification
     # ------------------------------------------------------------------
+
+    async def _await_otp_with_resend(self, email: str, jwt_token: str) -> str:
+        """Poll the mailbox in rounds, clicking Resend between empty rounds.
+
+        Blackbox drops a fair number of first-attempt mails, so a single long
+        wait mostly measures how patient we are. Each round re-asks for the
+        code, which is what a human staring at the form would do.
+        """
+        rounds = max(1, self._cfg.otp_resend_attempts)
+        log = get_logger()
+        last_exc: Exception | None = None
+
+        for attempt in range(1, rounds + 1):
+            try:
+                if self._cfg.tempmail_provider == "cloudflare":
+                    return await cloudflare_tempmail.wait_for_otp(
+                        self._cfg.cloudflare_api_url,
+                        jwt_token,
+                        email,
+                        self._cfg,
+                    )
+                return await tempmail.wait_for_otp(email, self._cfg)
+            except Exception as exc:
+                last_exc = exc
+                log.warning(
+                    "[%s] no otp on round %d/%d: %s", email, attempt, rounds, exc
+                )
+                await self._snapshot(email, f"no_otp_round{attempt}")
+                if attempt == rounds or not await self._click_resend(email):
+                    break
+
+        await self._snapshot(email, "no_otp")
+        raise last_exc if last_exc else BlackboxError("OTP wait failed")
+
+    async def _click_resend(self, email: str) -> bool:
+        """Click the Resend button on the OTP form. False if it isn't there."""
+        log = get_logger()
+        button = self.page.locator('button:has-text("Resend")').first
+        try:
+            if not await button.is_visible():
+                log.warning("[%s] resend button not visible, giving up", email)
+                return False
+            await button.click()
+            log.info("[%s] clicked resend, waiting for a fresh code", email)
+            return True
+        except PlaywrightError as exc:
+            log.warning("[%s] resend click failed: %s", email, exc)
+            return False
 
     async def verify_otp(self, code: str, email: str = "") -> None:
         page = self.page
