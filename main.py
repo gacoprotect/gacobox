@@ -185,15 +185,16 @@ def main_menu():
 # ─── Register ─────────────────────────────────────────────────────────
 
 def menu_register():
-    count = 10
-    workers = 3
-    headless = True
-    provider = "cloudflare"
-    domain = ""
-    cf_api = Config().cloudflare_api_url
-    use_proxy = False
-    warp_rotate = Config().warp_rotate and warp.available()
-    warp_cycle = Config().warp_cycle
+    defaults = Config()
+    count = defaults.count
+    workers = defaults.max_workers
+    headless = defaults.headless
+    provider = defaults.tempmail_provider
+    domain = defaults.tempmail_domain
+    cf_api = defaults.cloudflare_api_url
+    use_proxy = defaults.use_proxy
+    warp_rotate = defaults.warp_rotate and warp.available()
+    warp_cycle = defaults.warp_cycle
     state = load_state("output")
     done = len(done_emails(state))
 
@@ -305,7 +306,7 @@ def menu_register():
         elif raw in ("0", "q", "x", "b"):
             return
 
-def _do_register(count, workers, headless, provider, domain, cf_api, use_proxy=False, warp_rotate=False, warp_cycle=2, resume=False):
+def _do_register(count, workers, headless, provider, domain, cf_api, use_proxy=False, warp_rotate=False, warp_cycle=None, resume=False):
     warp_rotate = warp_rotate and not use_proxy
     cfg = Config(
         max_workers=workers,
@@ -314,7 +315,7 @@ def _do_register(count, workers, headless, provider, domain, cf_api, use_proxy=F
         tempmail_domain=domain,
         cloudflare_api_url=cf_api,
         warp_rotate=warp_rotate,
-        warp_cycle=warp_cycle,
+        warp_cycle=warp_cycle if warp_cycle is not None else Config().warp_cycle,
     )
     setup_logger(cfg.output_dir, debug=cfg.debug)
     state = load_state(cfg.output_dir)

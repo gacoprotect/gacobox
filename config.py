@@ -10,23 +10,25 @@ class Config:
     """Static run configuration. Override via CLI flags when needed."""
 
     blackbox_url: str = "https://app.blackbox.ai"
-    tempmail_domain: str = ""
-    tempmail_provider: str = "cloudflare"
+    tempmail_domain: str = os.getenv("TEMPMAIL_DOMAIN", "")
+    tempmail_provider: str = os.getenv("TEMPMAIL_PROVIDER", "cloudflare")
     cloudflare_api_url: str = os.getenv("CF_API_URL", "https://your-worker.workers.dev")
     cloudflare_default_domain: str = os.getenv("CF_DEFAULT_DOMAIN", "example.com")
     proxy_file: str = os.getenv("PROXY_FILE", "proxies.txt")
     warp_cli: str = os.getenv("WARP_CLI", "warp-cli")
     warp_rotate: bool = os.getenv("WARP_ROTATE", "0") not in ("0", "false", "")
     warp_cycle: int = int(os.getenv("WARP_CYCLE", "2"))
-    max_workers: int = 3
-    verify_poll_timeout: int = 30
-    verify_poll_interval: int = 5
-    otp_resend_attempts: int = 3
-    request_timeout: int = 120
+    max_workers: int = int(os.getenv("WORKERS", "3"))
+    count: int = int(os.getenv("COUNT", "10"))
+    use_proxy: bool = os.getenv("USE_PROXY", "0") not in ("0", "false", "")
+    verify_poll_timeout: int = int(os.getenv("VERIFY_POLL_TIMEOUT", "30"))
+    verify_poll_interval: int = int(os.getenv("VERIFY_POLL_INTERVAL", "5"))
+    otp_resend_attempts: int = int(os.getenv("OTP_RESEND_ATTEMPTS", "3"))
+    request_timeout: int = int(os.getenv("REQUEST_TIMEOUT", "120"))
     output_dir: str = "output"
     debug: bool = os.getenv("DEBUG", "1") not in ("0", "false", "")
     # Extra knobs kept off the main path but useful for debugging.
-    headless: bool = True
+    headless: bool = os.getenv("HEADLESS", "1") not in ("0", "false", "")
     random_delay_min: float = float(os.getenv("DELAY_MIN", "3.0"))
     random_delay_max: float = float(os.getenv("DELAY_MAX", "10.0"))
     cooldown_min: float = float(os.getenv("COOLDOWN_MIN", "10.0"))
