@@ -35,6 +35,9 @@ from injector import inject_keys, find_9router_db, list_injected, remove_keys
 from models import WORKING_MODELS, test_all
 from providers.blackbox import AccountResult, BlackboxClient
 from providers.tempmail import generate_email
+from providers.cf_domains import CLOUDFLARE_DOMAINS, get_random_domain
+from providers.proxy_manager import ProxyManager
+from logger import setup_logger, get_logger
 
 STATE_FILE = "state.json"
 console = Console(width=60)
@@ -60,6 +63,10 @@ def append_key(output_dir, record):
     p.parent.mkdir(parents=True, exist_ok=True)
     with p.open("a", encoding="utf-8") as f:
         f.write(f"{record['email']}:{record['password']}:{record['api_key']}\n")
+    
+    p9 = Path(output_dir) / "keys_9router.txt"
+    with p9.open("a", encoding="utf-8") as f:
+        f.write(f"{record['email']}|{record['api_key']}\n")
 
 def done_emails(state):
     return {a.get("email", "") for a in state.get("accounts", []) if a.get("success")}
@@ -180,7 +187,10 @@ def menu_register():
     count = 10
     workers = 3
     headless = True
-    domain = "catchmail.io"
+    provider = "cloudflare"
+    domain = ""
+    cf_api = Config().cloudflare_api_url
+    use_proxy = False
     state = load_state("output")
     done = len(done_emails(state))
 
@@ -196,7 +206,20 @@ def menu_register():
         settings.add_row("Count:", str(count))
         settings.add_row("Workers:", str(workers))
         settings.add_row("Headless:", "[green]ON[/green]" if headless else "[red]OFF[/red]")
-        settings.add_row("Domain:", domain)
+        settings.add_row("Provider:", provider)
+        if provider == "cloudflare":
+            settings.add_row("CF API:", cf_api)
+            settings.add_row("Domains:", f"{len(CLOUDFLARE_DOMAINS)} (random per account)")
+        else:
+            settings.add_row("Domain:", domain)
+        proxy_count = ProxyManager(Config().proxy_file).count()
+        if not use_proxy:
+            proxy_label = "[yellow]OFF (direct)[/yellow]"
+        elif proxy_count:
+            proxy_label = f"[green]ON - {proxy_count} loaded[/green]"
+        else:
+            proxy_label = "[red]ON but file empty[/red]"
+        settings.add_row("Proxies:", proxy_label)
         console.print(Panel(settings, title="SETTINGS", border_style="cyan"))
 
         actions = Table(box=None, show_header=False, padding=(0, 2))
@@ -209,8 +232,13 @@ def menu_register():
         actions.add_row("3", "CHANGE COUNT", f"Number of accounts (current: {count})")
         actions.add_row("4", "CHANGE WORKERS", f"Concurrent browsers (current: {workers})")
         actions.add_row("5", "TOGGLE HEADLESS", f"Browser visible (current: {'OFF' if headless else 'ON'})")
-        actions.add_row("6", "CHANGE DOMAIN", f"Email domain (current: {domain})")
-        actions.add_row("7", "BACK", "Return to main menu")
+        actions.add_row("6", "CHANGE PROVIDER", f"Email provider (current: {provider})")
+        if provider == "cloudflare":
+            actions.add_row("7", "CHANGE CF API", cf_api)
+        else:
+            actions.add_row("7", "CHANGE DOMAIN", f"Email domain (current: {domain})")
+        actions.add_row("8", "TOGGLE PROXY", f"Use proxies (current: {'ON' if use_proxy else 'OFF'})")
+        actions.add_row("9", "BACK", "Return to main menu")
         console.print(Panel(actions, title="ACTIONS", border_style="green"))
 
         try:
@@ -219,10 +247,10 @@ def menu_register():
             return
 
         if raw == "1":
-            _do_register(count, workers, headless, domain, resume=False)
+            _do_register(count, workers, headless, provider, domain, cf_api, use_proxy, resume=False)
             return
         elif raw == "2" and done > 0:
-            _do_register(count, workers, headless, domain, resume=True)
+            _do_register(count, workers, headless, provider, domain, cf_api, use_proxy, resume=True)
             return
         elif raw == "3":
             val = input(f"  Count [{count}]: ").strip()
@@ -233,13 +261,32 @@ def menu_register():
         elif raw == "5":
             headless = not headless
         elif raw == "6":
-            val = input(f"  Domain [{domain}]: ").strip()
-            if val: domain = val
-        elif raw in ("7", "q", "x", "b"):
+            console.print("\n  Providers: catchmail, cloudflare")
+            val = input(f"  Provider [{provider}]: ").strip().lower()
+            if val in ("catchmail", "cloudflare"):
+                provider = val
+                domain = "catchmail.io" if provider == "catchmail" else ""
+        elif raw == "7":
+            if provider == "cloudflare":
+                val = input(f"  Cloudflare API [{cf_api}]: ").strip()
+                if val: cf_api = val
+            else:
+                val = input(f"  Domain [{domain}]: ").strip()
+                if val: domain = val
+        elif raw == "8":
+            use_proxy = not use_proxy
+        elif raw in ("9", "q", "x", "b"):
             return
 
-def _do_register(count, workers, headless, domain, resume=False):
-    cfg = Config(max_workers=workers, headless=headless, tempmail_domain=domain)
+def _do_register(count, workers, headless, provider, domain, cf_api, use_proxy=False, resume=False):
+    cfg = Config(
+        max_workers=workers,
+        headless=headless,
+        tempmail_provider=provider,
+        tempmail_domain=domain,
+        cloudflare_api_url=cf_api
+    )
+    setup_logger(cfg.output_dir)
     state = load_state(cfg.output_dir)
 
     if resume:
@@ -252,17 +299,31 @@ def _do_register(count, workers, headless, domain, resume=False):
         console.print(f"  Resuming: {len(already)} done, {remaining} remaining")
         count = remaining
 
-    dashboard = FarmDashboard(total=count, max_workers=workers)
+    proxy_manager = ProxyManager(cfg.proxy_file) if use_proxy else None
+    proxy_count = proxy_manager.count() if proxy_manager else 0
+    get_logger().info(
+        "run start count=%d workers=%d headless=%s provider=%s proxies=%d",
+        count, workers, headless, provider, proxy_count,
+    )
+    dashboard = FarmDashboard(
+        total=count,
+        max_workers=workers,
+        provider=provider,
+        proxies=proxy_count,
+    )
     dashboard.start()
+    before = len(state.get("accounts", []))
     try:
-        asyncio.run(_drive(cfg, count, dashboard, state))
+        asyncio.run(_drive(cfg, count, dashboard, state, proxy_manager))
     except KeyboardInterrupt:
         pass
     finally:
         dashboard.stop()
-        accounts = state.get("accounts", [])
-        ok = [a for a in accounts if a.get("success")]
-        console.print(f"\n  Done: {len(ok)} succeeded, {len(accounts) - len(ok)} failed")
+        # state["accounts"] keeps every past run, so slice off this run only.
+        this_run = state.get("accounts", [])[before:]
+        ok = [a for a in this_run if a.get("success")]
+        console.print(f"\n  Done: {len(ok)} succeeded, {len(this_run) - len(ok)} failed")
+        get_logger().info("run end: %d ok, %d failed", len(ok), len(this_run) - len(ok))
 
         if ok:
             db = find_9router_db()
@@ -275,29 +336,45 @@ def _do_register(count, workers, headless, domain, resume=False):
 
         wait_key()
 
-async def _drive(cfg, count, dashboard, state):
+async def _drive(cfg, count, dashboard, state, proxy_manager):
     sem = asyncio.Semaphore(cfg.max_workers)
     launched = 0
     tasks = []
     skip = done_emails(state)
+    # wid must be claimed after the semaphore admits the task: assigning it at
+    # spawn time makes concurrent accounts share one dashboard row.
+    free_slots = asyncio.Queue()
+    for slot in range(cfg.max_workers):
+        free_slots.put_nowait(slot)
 
-    async def _account(wid, email, password):
+    async def _account(email, password, jwt_token=""):
         async with sem:
+            wid = await free_slots.get()
             result = AccountResult(email=email, password=password)
             start = time.monotonic()
             client = None
+            proxy = proxy_manager.get_random_proxy() if proxy_manager and proxy_manager.has_proxies() else None
             try:
-                dashboard.update_worker(wid, status="registering", email=email)
-                client = BlackboxClient(cfg)
+                dashboard.update_worker(
+                    wid, status="registering", email=email, error="", started_at=start
+                )
+                client = BlackboxClient(cfg, proxy=proxy)
                 await client.start()
-                api_key = await client.register_and_create_key(email, password)
+                api_key = await client.register_and_create_key(
+                    email,
+                    password,
+                    jwt_token,
+                    on_stage=lambda s: dashboard.update_worker(wid, status=s),
+                )
                 result.api_key = api_key
                 result.success = True
-                dashboard.update_worker(wid, status="done", email=email)
+                dashboard.finish_worker(wid, success=True)
             except Exception as e:
                 result.error = str(e)[:200]
-                dashboard.update_worker(wid, status="failed", error=result.error)
+                get_logger().error("[%s] failed: %s", email, result.error)
+                dashboard.finish_worker(wid, success=False, error=result.error)
             finally:
+                free_slots.put_nowait(wid)
                 if client:
                     try: await client.stop()
                     except: pass
@@ -312,11 +389,29 @@ async def _drive(cfg, count, dashboard, state):
                     append_key(cfg.output_dir, record)
 
     while launched < count:
-        email = generate_email(cfg.tempmail_domain)
-        while email in skip:
+        if cfg.tempmail_provider == "cloudflare":
+            from providers.cloudflare_tempmail import create_address
+            random_domain = get_random_domain()
+            email, jwt_token = await create_address(
+                cfg.cloudflare_api_url,
+                random_domain,
+                timeout=cfg.request_timeout
+            )
+            while email in skip:
+                random_domain = get_random_domain()
+                email, jwt_token = await create_address(
+                    cfg.cloudflare_api_url,
+                    random_domain,
+                    timeout=cfg.request_timeout
+                )
+        else:
             email = generate_email(cfg.tempmail_domain)
+            jwt_token = ""
+            while email in skip:
+                email = generate_email(cfg.tempmail_domain)
+        
         password = generate_password()
-        tasks.append(asyncio.create_task(_account(launched % cfg.max_workers, email, password)))
+        tasks.append(asyncio.create_task(_account(email, password, jwt_token)))
         launched += 1
         await asyncio.sleep(secrets.SystemRandom().uniform(*cfg.delay_range))
 

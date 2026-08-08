@@ -16,6 +16,7 @@ _STATUS_ICONS = {
     "idle": "[ ]",
     "registering": "[>]",
     "waiting_verify": "[?]",
+    "verifying_otp": "[~]",
     "creating_key": "[*]",
     "success": "[OK]",
     "failed": "[!!]",
@@ -47,8 +48,10 @@ class WorkerState:
 class FarmDashboard:
     """Thread-safe-ish Rich Live dashboard. Updates are pushed from the async loop."""
 
-    def __init__(self, total: int, max_workers: int) -> None:
+    def __init__(self, total: int, max_workers: int, provider: str = "", proxies: int = 0) -> None:
         self._total = total
+        self._provider = provider
+        self._proxies = proxies
         self._success = 0
         self._failed = 0
         self._start: float = time.monotonic()
@@ -74,7 +77,14 @@ class FarmDashboard:
         self._task = self._progress.add_task(
             "Farm", total=self._total, done=0, failed=0, speed="0/s", eta="?"
         )
-        self._live = Live(self._build(), console=self._console, refresh_per_second=4, screen=True)
+        # Live must pull _build() on every tick; passing a static renderable
+        # freezes elapsed timers between worker events.
+        self._live = Live(
+            get_renderable=self._build,
+            console=self._console,
+            refresh_per_second=4,
+            screen=True,
+        )
         self._live.start()
 
     def stop(self) -> None:
@@ -92,6 +102,7 @@ class FarmDashboard:
         for key, value in changes.items():
             if hasattr(w, key):
                 setattr(w, key, value)
+        w.done = False
         self._render()
 
     def finish_worker(self, worker_id: int, *, success: bool, error: str = "") -> None:
@@ -138,6 +149,12 @@ class FarmDashboard:
         text.append(f"  Total: {self._total}  ")
         text.append(f"Success: {self._success}  ", style="bold green")
         text.append(f"Failed: {self._failed}  ", style="bold red")
+        if self._provider:
+            text.append(f"Mail: {self._provider}  ", style="cyan")
+        if self._proxies:
+            text.append(f"Proxies: {self._proxies}  ", style="cyan")
+        else:
+            text.append("Proxies: none  ", style="yellow")
         return text
 
     def _workers_table(self) -> Table:
