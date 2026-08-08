@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 
 from config import Config
+from logger import get_logger
 
 _OTP_PATTERN = re.compile(r"\b(\d{6})\b")
 
@@ -183,10 +184,18 @@ async def wait_for_otp(
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise CloudflareTempMailError(
-                f"No OTP received for {email} within {cfg.verify_poll_timeout}s"
+                f"No OTP received within {cfg.verify_poll_timeout}s"
             )
-        
-        await _sleep(min(cfg.verify_poll_interval, remaining))
+
+        nap = min(cfg.verify_poll_interval, remaining)
+        get_logger().debug(
+            "[%s] poll: %d msg(s), no otp, %.0fs left, sleeping %.0fs",
+            email,
+            len(messages),
+            remaining,
+            nap,
+        )
+        await _sleep(nap)
 
 
 async def _sleep(seconds: float) -> None:

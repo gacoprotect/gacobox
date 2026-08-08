@@ -24,12 +24,12 @@ class _WorkerFilter(logging.Filter):
         return True
 
 
-def setup_logger(output_dir: str = "output", level: int = logging.DEBUG) -> logging.Logger:
+def setup_logger(output_dir: str = "output", debug: bool = True) -> logging.Logger:
     logger = logging.getLogger(_LOG_NAME)
     if logger.handlers:
         return logger
 
-    logger.setLevel(level)
+    logger.setLevel(logging.DEBUG if debug else logging.INFO)
     logger.propagate = False
 
     log_dir = Path(output_dir)
