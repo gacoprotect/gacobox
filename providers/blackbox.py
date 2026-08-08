@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable
 from urllib.parse import unquote, urlparse
 
@@ -131,6 +132,35 @@ class BlackboxClient:
     # Full flow
     # ------------------------------------------------------------------
 
+    async def _snapshot(self, email: str, tag: str) -> None:
+        """Log what the browser actually shows, plus a PNG for the hard cases."""
+        log = get_logger()
+        page = self._page
+        if page is None:
+            log.error("[%s] %s: no page", email, tag)
+            return
+        try:
+            body = await page.evaluate("document.body ? document.body.innerText : ''")
+            body = " | ".join(line.strip() for line in body.splitlines() if line.strip())
+            log.error(
+                "[%s] %s url=%s title=%r inputs=%d otp_input=%d buttons=%d bodylen=%d",
+                email,
+                tag,
+                page.url,
+                await page.title(),
+                await page.locator("input").count(),
+                await page.locator("input[maxlength='6']").count(),
+                await page.locator("button").count(),
+                len(body),
+            )
+            log.error("[%s] %s body: %s", email, tag, body[:600])
+            shot = Path(self._cfg.output_dir) / "debug" / f"{tag}_{email.split('@')[0]}.png"
+            shot.parent.mkdir(parents=True, exist_ok=True)
+            await page.screenshot(path=str(shot))
+            log.error("[%s] %s screenshot=%s", email, tag, shot)
+        except Exception as exc:
+            log.error("[%s] %s: snapshot failed: %s", email, tag, exc)
+
     async def register_and_create_key(
         self,
         email: str,
@@ -159,23 +189,31 @@ class BlackboxClient:
         log.info("[%s] signup submitted, url=%s", email, page.url)
 
         stage("waiting_verify")
-        if self._cfg.tempmail_provider == "cloudflare":
-            code = await cloudflare_tempmail.wait_for_otp(
-                self._cfg.cloudflare_api_url,
-                jwt_token,
-                email,
-                self._cfg
-            )
-        else:
-            code = await tempmail.wait_for_otp(email, self._cfg)
+        try:
+            if self._cfg.tempmail_provider == "cloudflare":
+                code = await cloudflare_tempmail.wait_for_otp(
+                    self._cfg.cloudflare_api_url,
+                    jwt_token,
+                    email,
+                    self._cfg
+                )
+            else:
+                code = await tempmail.wait_for_otp(email, self._cfg)
+        except Exception:
+            await self._snapshot(email, "no_otp")
+            raise
         log.info("[%s] otp received=%s", email, code)
 
         stage("verifying_otp")
-        await self.verify_otp(code)
+        await self.verify_otp(code, email)
         log.info("[%s] otp verified, url=%s", email, page.url)
 
         stage("creating_key")
-        api_key = await self.create_api_key()
+        try:
+            api_key = await self.create_api_key()
+        except Exception:
+            await self._snapshot(email, "no_key")
+            raise
         log.info("[%s] key created len=%d", email, len(api_key))
         return api_key
 
@@ -200,6 +238,7 @@ class BlackboxClient:
                     "[%s] signup form not rendered (attempt %d/3), reloading", email, attempt
                 )
                 if attempt == 3:
+                    await self._snapshot(email, "no_signup_form")
                     raise BlackboxError("Signup form never rendered after 3 attempts")
 
         await email_input.fill(email)
@@ -225,10 +264,16 @@ class BlackboxClient:
     # Step 2 — OTP verification
     # ------------------------------------------------------------------
 
-    async def verify_otp(self, code: str) -> None:
+    async def verify_otp(self, code: str, email: str = "") -> None:
         page = self.page
         otp_input = page.locator('input[maxlength="6"], input[placeholder*="code" i], input[name="code"], input[inputmode="numeric"]').first
-        await otp_input.wait_for(state="visible", timeout=15_000)
+        try:
+            await otp_input.wait_for(state="visible", timeout=15_000)
+        except PlaywrightTimeoutError:
+            # Some signups land on a "check your email" page instead of the code
+            # form, so the OTP arrives with nowhere to type it.
+            await self._snapshot(email, "no_otp_form")
+            raise
         await otp_input.fill(code)
 
         verify_btn = page.locator('button:has-text("Verify")').first
