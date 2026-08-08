@@ -34,6 +34,23 @@ class BlackboxError(Exception):
     """Raised when a browser step in the Blackbox flow fails."""
 
 
+def _mask_proxy(proxy: str | None) -> str:
+    """Render a proxy URL for logs with the user:pass part hidden.
+
+    Only the userinfo is masked; scheme, host and port stay readable because
+    they are what you need when a run stalls on one endpoint.
+    """
+    if not proxy:
+        return "direct"
+    parsed = urlparse(proxy)
+    if not parsed.username:
+        return proxy
+    host = parsed.hostname or ""
+    if parsed.port:
+        host += f":{parsed.port}"
+    return f"{parsed.scheme}://***@{host}"
+
+
 @dataclass(slots=True)
 class AccountResult:
     """Outcome of one full signup+key run."""
@@ -183,7 +200,7 @@ class BlackboxClient:
         page.set_default_timeout(self._cfg.request_timeout * 1000)
 
         log = get_logger()
-        log.info("[%s] flow start proxy=%s", email, self._proxy or "direct")
+        log.info("[%s] flow start proxy=%s", email, _mask_proxy(self._proxy))
         stage = on_stage or (lambda _: None)
 
         stage("registering")
