@@ -285,16 +285,21 @@ class BlackboxClient:
         wait mostly measures how patient we are. Each round re-asks for the
         code, which is what a human staring at the form would do.
         """
-        rounds = max(1, self._cfg.otp_resend_attempts)
+        # The config names clicks, so it gets clicks: `otp_resend_attempts=3`
+        # means three Resend presses, each followed by its own poll. The extra
+        # round is the one before any click - it waits on the mail the signup
+        # itself triggered - so a run polls `clicks + 1` times.
+        clicks = max(0, self._cfg.otp_resend_attempts)
+        rounds = clicks + 1
         log = get_logger()
         emit = stage or (lambda _: None)
         last_exc: Exception | None = None
         used = 0
-        resend_blocked = False
+        resend_refused = 0
 
         for attempt in range(1, rounds + 1):
             used = attempt
-            emit("waiting_verify" if attempt == 1 else f"resend {attempt}/{rounds}")
+            emit("waiting_verify")
             try:
                 if self._cfg.tempmail_provider == "cloudflare":
                     return await cloudflare_tempmail.wait_for_otp(
@@ -312,23 +317,34 @@ class BlackboxClient:
                 await self._snapshot(email, f"no_otp_round{attempt}")
                 if attempt == rounds:
                     break
-                if not await self._resend_with_retry(email):
-                    resend_blocked = True
-                    break
+                emit(f"resend {attempt}/{clicks}")
+                # A rejected resend does not end the run: retrying it back to
+                # back only hammers an endpoint that is already returning 500,
+                # and it used to burn all three tries inside round 1 - so the
+                # later rounds never ran and a failure took ~50s instead of the
+                # full poll budget. Falling through to the next round waits out
+                # another `verify_poll_timeout` instead, which is also the only
+                # thing that can still catch the original signup mail.
+                if not await self._click_resend(email):
+                    resend_refused += 1
 
         await self._snapshot(email, "no_otp")
         domain = email.partition("@")[2]
-        if resend_blocked:
+        if clicks and resend_refused == clicks:
             # The mailbox never got a chance: the send endpoint refused us, and
             # those 500s hit ten different domains in one run, including two
             # that succeeded minutes later. Benching here would retire healthy
-            # domains for an outage on Blackbox's side.
+            # domains for an outage on Blackbox's side. Only skip the bench when
+            # *every* click was refused - one accepted resend means the domain
+            # really did fail to deliver.
             log.error(
-                "[%s] giving up after %d/%d round(s): resend endpoint refused, "
-                "not benching %s",
+                "[%s] giving up after %d/%d round(s): resend endpoint refused "
+                "%d/%d time(s), not benching %s",
                 email,
                 used,
                 rounds,
+                resend_refused,
+                clicks,
                 domain,
             )
         elif domain:
@@ -413,31 +429,6 @@ class BlackboxClient:
         )
         await self._log_visible_alert(email)
         return True
-
-    async def _resend_with_retry(self, email: str, attempts: int = 3) -> bool:
-        """Retry a rejected resend before giving up on the address.
-
-        The 500s are not tied to a domain or to timing: one run had the same
-        domain accepted once and rejected once, and every request sat at the
-        same 126s mark. Roughly two thirds fail, so a single rejection says
-        nothing about the next attempt.
-        """
-        log = get_logger()
-        for attempt in range(1, attempts + 1):
-            if await self._click_resend(email):
-                return True
-            if attempt < attempts:
-                delay = 2.0 * attempt
-                log.info(
-                    "[%s] resend attempt %d/%d rejected, retrying in %.0fs",
-                    email,
-                    attempt,
-                    attempts,
-                    delay,
-                )
-                await asyncio.sleep(delay)
-        log.error("[%s] resend failed %d times, giving up", email, attempts)
-        return False
 
     async def _log_visible_alert(self, email: str) -> None:
         """Surface any on-page message the resend produced.

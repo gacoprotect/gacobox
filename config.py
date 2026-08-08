@@ -19,17 +19,20 @@ class Config:
     warp_rotate: bool = os.getenv("WARP_ROTATE", "0") not in ("0", "false", "")
     warp_cycle: int = int(os.getenv("WARP_CYCLE", "2"))
     max_workers: int = 3
-    verify_poll_timeout: int = 60
+    verify_poll_timeout: int = 30
     verify_poll_interval: int = 5
     otp_resend_attempts: int = 3
     request_timeout: int = 120
     output_dir: str = "output"
+    debug: bool = os.getenv("DEBUG", "1") not in ("0", "false", "")
     # Extra knobs kept off the main path but useful for debugging.
     headless: bool = True
-    random_delay_min: float = 3.0
-    random_delay_max: float = 10.0
-    cooldown_min: float = 10.0
-    cooldown_max: float = 20.0
+    random_delay_min: float = float(os.getenv("DELAY_MIN", "3.0"))
+    random_delay_max: float = float(os.getenv("DELAY_MAX", "10.0"))
+    cooldown_min: float = float(os.getenv("COOLDOWN_MIN", "10.0"))
+    cooldown_max: float = float(os.getenv("COOLDOWN_MAX", "20.0"))
+    warp_stagger_min: float = float(os.getenv("WARP_STAGGER_MIN", "1.0"))
+    warp_stagger_max: float = float(os.getenv("WARP_STAGGER_MAX", "5.0"))
     key_name: str = "gaco-dev"
 
     @property
@@ -39,6 +42,10 @@ class Config:
     @property
     def cooldown_range(self) -> tuple[float, float]:
         return (self.cooldown_min, self.cooldown_max)
+
+    @property
+    def warp_stagger_range(self) -> tuple[float, float]:
+        return (self.warp_stagger_min, self.warp_stagger_max)
 
     def with_updates(self, **updates: object) -> "Config":
         """Return a copy with the given dataclass fields replaced."""

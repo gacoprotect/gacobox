@@ -316,7 +316,7 @@ def _do_register(count, workers, headless, provider, domain, cf_api, use_proxy=F
         warp_rotate=warp_rotate,
         warp_cycle=warp_cycle,
     )
-    setup_logger(cfg.output_dir)
+    setup_logger(cfg.output_dir, debug=cfg.debug)
     state = load_state(cfg.output_dir)
 
     if resume:
@@ -379,6 +379,7 @@ async def _drive(cfg, count, dashboard, state, proxy_manager):
             cfg.warp_cli,
             dashboard.warp_rotated,
             dashboard.worker_note,
+            cfg.warp_stagger_range,
         )
         if cfg.warp_rotate
         else None
@@ -387,68 +388,75 @@ async def _drive(cfg, count, dashboard, state, proxy_manager):
         dashboard.warp_ip(await warp.public_ip())
     tasks = []
     skip = done_emails(state)
-    # wid must be claimed after the semaphore admits the task: assigning it at
-    # spawn time makes concurrent accounts share one dashboard row.
     free_slots = asyncio.Queue()
     for slot in range(cfg.max_workers):
         free_slots.put_nowait(slot)
 
+    async def _claim():
+        if barrier:
+            return await barrier.enter()
+        await sem.acquire()
+        return await free_slots.get()
+
+    async def _release(wid, remaining):
+        if barrier:
+            await barrier.account_done(remaining=remaining, worker_id=wid)
+            return
+        free_slots.put_nowait(wid)
+        sem.release()
+
     async def _account(email, password, jwt_token=""):
         nonlocal finished
-        async with sem:
-            wid = await free_slots.get()
-            set_worker(wid)
-            if barrier:
-                await barrier.enter(wid)
-            result = AccountResult(email=email, password=password)
-            start = time.monotonic()
-            client = None
-            proxy = proxy_manager.get_random_proxy() if proxy_manager and proxy_manager.has_proxies() else None
-            try:
-                dashboard.update_worker(
-                    wid, status="registering", email=email, error="", started_at=start
-                )
-                client = BlackboxClient(cfg, proxy=proxy)
-                await client.start()
-                api_key = await client.register_and_create_key(
-                    email,
-                    password,
-                    jwt_token,
-                    on_stage=lambda s: dashboard.update_worker(wid, status=s),
-                )
-                result.api_key = api_key
-                result.success = True
-                dashboard.finish_worker(wid, success=True)
-            except Exception as e:
-                result.error = str(e)[:200]
-                get_logger().error("[%s] failed: %s", email, result.error)
-                dashboard.finish_worker(wid, success=False, error=result.error)
-            finally:
-                if client:
-                    try: await client.stop()
-                    except: pass
-                result.elapsed = time.monotonic() - start
-                record = {"email": result.email, "password": result.password,
-                         "api_key": result.api_key, "success": result.success,
-                         "error": result.error, "elapsed": round(result.elapsed, 2)}
-                state["accounts"].append(record)
-                state["target"] = count
-                save_state(cfg.output_dir, state)
-                if result.api_key:
-                    append_key(cfg.output_dir, record)
-                # Cool down while still holding the slot, otherwise the next
-                # account starts immediately and the pause buys us nothing.
-                # Once every account has claimed a slot nobody is waiting on
-                # this one, so the sleep would only delay the run's end.
-                if launched < count:
-                    cooldown = secrets.SystemRandom().uniform(*cfg.cooldown_range)
-                    dashboard.update_worker(wid, status="cooldown")
-                    get_logger().info("[%s] cooldown %.1fs", email, cooldown)
-                    await asyncio.sleep(cooldown)
-                finished += 1
-                if barrier:
-                    await barrier.account_done(remaining=count - finished, worker_id=wid)
-                free_slots.put_nowait(wid)
+        wid = await _claim()
+        set_worker(wid)
+        result = AccountResult(email=email, password=password)
+        start = time.monotonic()
+        client = None
+        proxy = proxy_manager.get_random_proxy() if proxy_manager and proxy_manager.has_proxies() else None
+        try:
+            dashboard.update_worker(
+                wid, status="registering", email=email, error="", started_at=start
+            )
+            client = BlackboxClient(cfg, proxy=proxy)
+            await client.start()
+            api_key = await client.register_and_create_key(
+                email,
+                password,
+                jwt_token,
+                on_stage=lambda s: dashboard.update_worker(wid, status=s),
+            )
+            result.api_key = api_key
+            result.success = True
+            dashboard.finish_worker(wid, success=True)
+        except Exception as e:
+            result.error = str(e)[:200]
+            get_logger().error("[%s] failed: %s", email, result.error)
+            dashboard.finish_worker(wid, success=False, error=result.error)
+        finally:
+            if client:
+                try: await client.stop()
+                except: pass
+            result.elapsed = time.monotonic() - start
+            record = {"email": result.email, "password": result.password,
+                     "api_key": result.api_key, "success": result.success,
+                     "error": result.error, "elapsed": round(result.elapsed, 2)}
+            state["accounts"].append(record)
+            state["target"] = count
+            save_state(cfg.output_dir, state)
+            if result.api_key:
+                append_key(cfg.output_dir, record)
+            finished += 1
+            # Release before the cooldown: the slot is what the barrier counts,
+            # so sleeping while holding it makes every other worker wait out
+            # this pause before the egress can move. The signups stay spaced
+            # either way, they just overlap the rotation instead of preceding
+            # it.
+            await _release(wid, count - finished)
+            if launched < count:
+                cooldown = secrets.SystemRandom().uniform(*cfg.cooldown_range)
+                dashboard.update_worker(wid, status="cooldown")
+                get_logger().info("[%s] cooldown %.1fs", email, cooldown)
+                await asyncio.sleep(cooldown)
 
     while launched < count:
         if cfg.tempmail_provider == "cloudflare":
