@@ -53,15 +53,22 @@ class WorkerState:
 class FarmDashboard:
     """Thread-safe-ish Rich Live dashboard. Updates are pushed from the async loop."""
 
-    def __init__(self, total: int, max_workers: int, provider: str = "", proxies: int = 0, warp: str = "") -> None:
+    def __init__(
+        self,
+        total: int,
+        max_workers: int,
+        provider: str = "",
+        proxies: int = 0,
+        warp: int = 0,
+        warp_available: bool = True,
+    ) -> None:
         self._total = total
         self._provider = provider
         self._proxies = proxies
         self._warp = warp
-        self._warp_rotations = 0
         self._warp_ip = ""
-        self._warp_note = "" if warp != "unavailable" else "warp-cli not installed"
-        self._warp_style = "cyan" if warp != "unavailable" else "bold red"
+        self._warp_note = "" if warp_available else "warp-cli not installed"
+        self._warp_style = "cyan" if warp_available else "bold red"
         self._success = 0
         self._failed = 0
         self._start: float = time.monotonic()
@@ -172,15 +179,15 @@ class FarmDashboard:
         else:
             text.append("Proxies: none  ", style="yellow")
         if self._warp:
-            label = self._warp
-            if self._warp_rotations:
-                label += f" x{self._warp_rotations}"
-            if self._warp_ip:
-                label += f" {self._warp_ip}"
+            label = self._warp_ip or "connecting"
             if self._warp_note:
                 label += f" ({self._warp_note})"
-            text.append(f"WARP: {label}  ", style=self._warp_style)
+            text.append(f"WARP-{self._warp}: {label}  ", style=self._warp_style)
         return text
+
+    def warp_ip(self, ip: str) -> None:
+        self._warp_ip = ip
+        self._render()
 
     def warp_rotated(self, result: "Rotation") -> None:
         if result.ip:
@@ -189,7 +196,6 @@ class FarmDashboard:
             self._warp_style = "bold red"
             self._warp_note = result.detail or "unavailable"
         elif result.moved:
-            self._warp_rotations += 1
             self._warp_style = "cyan"
             self._warp_note = ""
         else:

@@ -335,18 +335,13 @@ def _do_register(count, workers, headless, provider, domain, cf_api, use_proxy=F
         "run start count=%d workers=%d headless=%s provider=%s proxies=%d",
         count, workers, headless, provider, proxy_count,
     )
-    if not cfg.warp_rotate:
-        warp_label = ""
-    elif warp.available(cfg.warp_cli):
-        warp_label = f"every {max(1, cfg.warp_cycle) * max(1, workers)}"
-    else:
-        warp_label = "unavailable"
     dashboard = FarmDashboard(
         total=count,
         max_workers=workers,
         provider=provider,
         proxies=proxy_count,
-        warp=warp_label,
+        warp=max(1, cfg.warp_cycle) * max(1, workers) if cfg.warp_rotate else 0,
+        warp_available=warp.available(cfg.warp_cli),
     )
     dashboard.start()
     before = len(state.get("accounts", []))
@@ -382,6 +377,8 @@ async def _drive(cfg, count, dashboard, state, proxy_manager):
         if cfg.warp_rotate
         else None
     )
+    if barrier:
+        dashboard.warp_ip(await warp.public_ip())
     tasks = []
     skip = done_emails(state)
     # wid must be claimed after the semaphore admits the task: assigning it at
